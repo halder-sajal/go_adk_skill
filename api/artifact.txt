@@ -1,0 +1,144 @@
+package artifact // import "google.golang.org/adk/v2/artifact"
+
+Package artifact provides a service for managing artifacts.
+
+An artifact is a file identified by an application name, a user ID, a session
+ID, and a filename. The service provides basic storage operations for artifacts,
+such as Save, Load, Delete, and List. It also supports versioning of artifacts.
+
+TYPES
+
+type ArtifactVersion struct {
+	Version int64
+
+	// CanonicalURI identifies the stored payload in the scheme native to the
+	// backing store, such as gs:// for Google Cloud Storage. It is an identity,
+	// not a download endpoint: it is what a consumer that understands the
+	// scheme resolves, including a model handed it as the FileURI of a
+	// [genai.Part] FileData. It is not an authenticated HTTP URL, and a service
+	// that has no such scheme may leave it empty.
+	CanonicalURI string
+
+	CustomMetadata map[string]any
+	CreateTime     time.Time
+	MimeType       string
+}
+    ArtifactVersion contains metadata describing a specific version of an
+    artifact.
+
+type DeleteRequest struct {
+	AppName, UserID, SessionID, FileName string
+
+	// Below are optional fields.
+	Version int64
+}
+    DeleteRequest is the parameter for [ArtifactService.Delete].
+
+func (req *DeleteRequest) Validate() error
+    Validate checks if the struct is valid or if it is missing fields.
+
+type GetArtifactVersionRequest struct {
+	AppName, UserID, SessionID, FileName string
+
+	// Below are optional fields.
+	Version int64
+}
+    GetArtifactVersionRequest is the parameter for
+    [ArtifactService.GetArtifactVersion].
+
+func (req *GetArtifactVersionRequest) Validate() error
+    Validate checks if the struct is valid or if it is missing a field.
+
+type GetArtifactVersionResponse struct {
+	ArtifactVersion *ArtifactVersion
+}
+    GetArtifactVersionResponse is the return type of
+    [ArtifactService.GetArtifactVersion].
+
+type ListRequest struct {
+	AppName, UserID, SessionID string
+}
+    ListRequest is the parameter for [ArtifactService.List].
+
+func (req *ListRequest) Validate() error
+    Validate checks if the struct is valid or if it is missing a field.
+
+type ListResponse struct {
+	FileNames []string
+}
+    ListResponse is the return type of [ArtifactService.List].
+
+type LoadRequest struct {
+	AppName, UserID, SessionID, FileName string
+
+	// Below are optional fields.
+	Version int64
+}
+    LoadRequest is the parameter for [ArtifactService.Load].
+
+func (req *LoadRequest) Validate() error
+    Validate checks if the struct is valid or if it is missing fields.
+
+type LoadResponse struct {
+	// Part is the artifact stored.
+	Part *genai.Part
+}
+    LoadResponse is the return type of [ArtifactService.Load].
+
+type SaveRequest struct {
+	AppName, UserID, SessionID, FileName string
+	// Part is the artifact to store.
+	Part *genai.Part
+
+	// If set, the artifact will be saved with this version.
+	// If unset, a new version will be created.
+	Version int64
+}
+    SaveRequest is the parameter for [ArtifactService.Save].
+
+func (req *SaveRequest) Validate() error
+    Validate checks if the struct is valid or if it is missing fields.
+
+type SaveResponse struct {
+	Version int64
+}
+    SaveResponse is the return type of [ArtifactService.Save].
+
+type Service interface {
+	// Save saves an artifact to the artifact service storage.
+	// The artifact is a file identified by the app name, user ID, session ID, and fileName.
+	// After saving the artifact, a revision ID is returned to identify the artifact version.
+	// Implementations that assign versions optimistically may fail to claim one
+	// while other writers save the same artifact; that failure is transient and
+	// the call can be retried.
+	Save(ctx context.Context, req *SaveRequest) (*SaveResponse, error)
+	// Load loads an artifact from the storage.
+	// The artifact is a file identified by the appName, userID, sessionID and fileName.
+	Load(ctx context.Context, req *LoadRequest) (*LoadResponse, error)
+	// Delete deletes an artifact. Deleting a non-existing entry is not an error.
+	Delete(ctx context.Context, req *DeleteRequest) error
+	// List lists all the artifact filenames within a session.
+	List(ctx context.Context, req *ListRequest) (*ListResponse, error)
+	// Versions lists all versions of an artifact.
+	Versions(ctx context.Context, req *VersionsRequest) (*VersionsResponse, error)
+	// GetArtifactVersion gets the metadata for a specific version of an artifact.
+	GetArtifactVersion(ctx context.Context, req *GetArtifactVersionRequest) (*GetArtifactVersionResponse, error)
+}
+    Service is the artifact storage service.
+
+func InMemoryService() Service
+    InMemoryService returns a new in-memory artifact service.
+
+type VersionsRequest struct {
+	AppName, UserID, SessionID, FileName string
+}
+    VersionsRequest is the parameter for [ArtifactService.Versions].
+
+func (req *VersionsRequest) Validate() error
+    Validate checks if the struct is valid or if its missing field
+
+type VersionsResponse struct {
+	Versions []int64
+}
+    VersionsResponse is the parameter for [ArtifactService.Versions].
+

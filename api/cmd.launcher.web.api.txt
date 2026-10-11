@@ -1,0 +1,9 @@
+package api // import "google.golang.org/adk/v2/cmd/launcher/web/api"
+
+Package api provides a sublauncher that adds ADK REST API capabilities.
+
+FUNCTIONS
+
+func NewLauncher() weblauncher.Sublauncher
+    NewLauncher creates new api launcher. It extends Web launcher
+

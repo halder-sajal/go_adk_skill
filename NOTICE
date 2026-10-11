@@ -1,0 +1,7 @@
+This skill bundles unmodified source files, documentation and tests from
+Google's Agent Development Kit for Go (https://github.com/google/adk-go),
+version v2.4.0, in the directories src/ and tests-workflow/, and API
+documentation generated from it with `go doc` in api/.
+Those files are Copyright Google LLC and licensed under the Apache License,
+Version 2.0 — see LICENSE-ADK. The reference/ notes, SKILL.md and verify/
+programs are original work that summarizes and tests that library.

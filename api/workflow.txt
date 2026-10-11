@@ -1,0 +1,1016 @@
+package workflow // import "google.golang.org/adk/v2/workflow"
+
+Package workflow hosts workflow definitions and primitives for building
+multi-agent applications.
+
+CONSTANTS
+
+const WorkflowInputFunctionCallName = "adk_request_input"
+    WorkflowInputFunctionCallName is the FunctionCall name carried on a request
+    event so the agent runtime's generic FunctionResponse- by-ID dispatch can
+    route the user's follow-up reply back to the workflow agent that issued the
+    request. Mirrors toolconfirmation.FunctionCallName.
+
+    This is a wire-format identifier shared with other ADK runtimes and must not
+    be changed without coordinated updates across them; a session recorded by
+    one runtime must round-trip through any other runtime's resume dispatch.
+
+
+VARIABLES
+
+var (
+	// ErrNodeFailed wraps a child node's runtime failure after retries.
+	ErrNodeFailed = errors.New("workflow: dynamic child failed")
+
+	// ErrNodeInterrupted wraps a child node's HITL pause request.
+	ErrNodeInterrupted = errors.New("workflow: dynamic child interrupted")
+
+	// ErrNodeWaitingForOutput is a pause with no interrupt ID: a
+	// WaitForOutput child finished without output, so the parent parks
+	// instead of completing. Wraps ErrNodeInterrupted so existing
+	// errors.Is(ErrNodeInterrupted) checks still treat it as a pause.
+	ErrNodeWaitingForOutput = fmt.Errorf("%w: waiting for output", ErrNodeInterrupted)
+
+	// ErrInvalidRunNodeContext is returned by RunNode when ctx is not
+	// the context of a currently-executing dynamic node (i.e. it
+	// carries no sub-scheduler).
+	ErrInvalidRunNodeContext = errors.New("workflow: RunNode called outside a dynamic node")
+
+	// ErrInvalidRunID rejects a custom run id that would collide
+	// with the auto-counter: purely numeric ids are reserved.
+	ErrInvalidRunID = errors.New("workflow: invalid run id")
+
+	// ErrParallelHITLUnsupported rejects two children of one
+	// activation interrupting concurrently — at most one pending HITL
+	// per activation.
+	ErrParallelHITLUnsupported = errors.New("workflow: parallel HITL is not supported")
+
+	// ErrInputValidation indicates that the node input did not pass validation.
+	ErrInputValidation = errors.New("workflow: input validation failed")
+	// ErrOutputAlreadyDelegated rejects a second WithUseAsOutput
+	// child in the same parent activation.
+	ErrOutputAlreadyDelegated = errors.New("workflow: parent already has a use_as_output child")
+)
+var (
+	// ErrMultipleOutputs is returned when a node yields more than
+	// one event with Event.Output set. A node activation may emit
+	// at most one output value.
+	ErrMultipleOutputs = errors.New("workflow: node produced multiple events with output values; only one event per execution can carry output")
+
+	// ErrMultipleRoutingEvents is returned when a node yields more
+	// than one event whose Routes field is set. A node activation
+	// may emit at most one routing decision.
+	ErrMultipleRoutingEvents = errors.New("workflow: node produced multiple events with route tags; only one event per execution can specify routes")
+
+	// ErrMultipleTerminalOutputs is returned when more than one
+	// terminal node produced output in a run, making the workflow's
+	// output ambiguous. See scheduler.finalize for the exact rule.
+	ErrMultipleTerminalOutputs = errors.New("workflow: multiple terminal nodes produced output; a workflow must have at most one terminal output")
+)
+var ErrDuplicateEdge = errors.New("duplicate edge")
+    ErrDuplicateEdge is returned when an edge set contains two identical edges.
+    Two edges with the same (From, To) are rejected regardless of Route;
+    use MultiRoute to express alternatives to the same target.
+
+var ErrDuplicateNodeName = errors.New("duplicate node name")
+    ErrDuplicateNodeName is returned when an edge set contains two distinct Node
+    instances that share the same Name.
+
+var ErrInvalidResumeResponse = errors.New("workflow: resume response does not match request schema")
+    ErrInvalidResumeResponse is returned by Workflow.Resume when a response
+    payload does not match its corresponding RequestInput.ResponseSchema.
+    The waiting node is left in NodeWaiting with PendingRequest intact so the
+    caller can retry with a corrected payload.
+
+var ErrMultipleDefaultRoutes = errors.New("node has more than one default route")
+    ErrMultipleDefaultRoutes is returned when a node has more than one default
+    route.
+
+var ErrNoStartNode = errors.New("no start node found")
+    ErrNoStartNode is returned when no start node is found in the edge set.
+
+var ErrNodePointsToStart = errors.New("node points to start node")
+    ErrNodePointsToStart is returned when a node points to the start node.
+
+var ErrNodesNotReachable = errors.New("nodes not reachable from start node")
+    ErrNodesNotReachable is returned when some nodes are not reachable from the
+    start node.
+
+var ErrNothingToResume = errors.New("workflow: no waiting node matched the supplied responses")
+    ErrNothingToResume is returned by Workflow.Resume when the caller supplied a
+    non-empty responses map but no waiting node matched any of the InterruptIDs
+    in it. Lets the caller distinguish "successful resume" from "submitted
+    response had no effect" — typically a sign that the response targets a stale
+    or already-consumed request, or that the workflow graph has evolved out of
+    the node that was waiting.
+
+var ErrSubWorkflowNameCollision = errors.New("sub-workflow name collision")
+    ErrSubWorkflowNameCollision is returned when a sub-workflow has the same
+    name as the parent workflow.
+
+var ErrUnconditionalCycle = errors.New("unconditional cycle detected")
+    ErrUnconditionalCycle is returned when a cycle is detected that does not
+    contain any conditional edges.
+
+var ErrUnsupportedFanIn = errors.New("non-JoinNode fan-in is not yet supported")
+    ErrUnsupportedFanIn is returned when a non-JoinNode has two or more
+    unconditional incoming edges. Such a fan-in target would be activated
+    once per predecessor, which the scheduler does not yet serialize safely.
+    Use a JoinNode to converge multiple branches.
+
+
+FUNCTIONS
+
+func CalculateDelay(cfg *RetryConfig, failedAttempts int) time.Duration
+    CalculateDelay calculates the delay before the next retry attempt.
+    failedAttempts is the number of times the node has already failed.
+
+func NewRequestInputEvent(ctx agent.InvocationContext, req session.RequestInput) *session.Event
+    NewRequestInputEvent constructs a session.Event that asks the surrounding
+    workflow to pause and surface a human-input prompt. A node yields the
+    returned event and then exits its iter.Seq2; the scheduler observes
+    Event.RequestedInput and transitions the node to NodeWaiting.
+
+    The event also carries a synthesised FunctionCall part with name
+    WorkflowInputFunctionCallName and ID equal to req.InterruptID,
+    plus req.InterruptID in LongRunningToolIDs. This shape makes
+    Event.IsFinalResponse() return true so the surrounding agent loop terminates
+    after the request is yielded, and lets the generic FunctionResponse-by-ID
+    dispatch route the human's reply back to the workflow agent that issued the
+    request.
+
+    Prefer a unique InterruptID per request. If req.InterruptID is empty,
+    a UUID is generated so the downstream contract (a non-empty correlation
+    key on NodeState.PendingRequest) is always satisfied. You may also
+    build a readable-but-unique ID (a stable prefix plus a UUID). Avoid a
+    fixed literal that recurs across separate runs in the same session:
+    clients such as the Dev UI track answered requests by this ID and will
+    not re-prompt for one already resolved earlier in the session (see
+    session.RequestInput.InterruptID).
+
+    Example:
+
+        func (n *MyNode) Run(ctx agent.InvocationContext, in any) iter.Seq2[*session.Event, error] {
+            return func(yield func(*session.Event, error) bool) {
+                yield(workflow.NewRequestInputEvent(ctx, session.RequestInput{
+                    InterruptID: "human_review-" + uuid.NewString(),
+                    Message:     "Please review this draft.",
+                    Payload:     draft,
+                }), nil)
+            }
+        }
+
+func ResumeOrRequestInput(ctx agent.Context, emit func(*session.Event) error, req session.RequestInput) (any, error)
+    ResumeOrRequestInput collapses the re-entry HITL pattern (see
+    NodeConfig.RerunOnResume) into one call: it returns the human's reply if the
+    node is being re-run after the answer, otherwise it emits a RequestInput
+    and returns ErrNodeInterrupted so the caller can pause. req.InterruptID is
+    the shared key for the request and the resume lookup. An emit failure is
+    returned in place of ErrNodeInterrupted. See examples/workflow/hitl_rerun
+    for usage.
+
+func RunNode[OUT any](ctx agent.Context, child Node, input any, opts ...RunNodeOption) (OUT, error)
+    RunNode schedules child as a sub-node of the currently-executing dynamic
+    node and returns its typed output. ctx must be the context passed into the
+    enclosing dynamic node's body (it carries the sub-scheduler used to schedule
+    the child).
+
+    On failure:
+      - errors.Is(err, ErrNodeInterrupted): child paused for HITL.
+      - errors.Is(err, ErrNodeFailed): child errored after retries; errors.As
+        recovers *NodeRunError with diagnostics.
+      - ErrInvalidRunNodeContext, ErrInvalidRunID: misuse.
+      - ctx.Err(): parent cancellation.
+
+func ShouldRetry(cfg *RetryConfig, err error, failedAttempts int) bool
+    ShouldRetry decides whether a node should be retried after a failure.
+    failedAttempts is the number of times the node has already failed.
+
+
+TYPES
+
+type AgentNode struct {
+	BaseNode
+	// Has unexported fields.
+}
+    AgentNode wraps a standard agent.Agent. Wrapped agents should emit their
+    final output via Event.Output to be propagated to successor nodes
+
+func NewAgentNode(a agent.Agent, cfg NodeConfig) (*AgentNode, error)
+    NewAgentNode creates a new node wrapping an agent. Input and output schemas
+    are inferred as `any`.
+
+func NewAgentNodeTyped[Input, Output any](a agent.Agent, cfg NodeConfig) (*AgentNode, error)
+    NewAgentNodeTyped creates a new node wrapping an agent using generics to
+    automatically infer input and output schemas from the provided types.
+
+func NewAgentNodeWithSchemas(a agent.Agent, inputSchema, outputSchema *jsonschema.Schema, cfg NodeConfig) (*AgentNode, error)
+    NewAgentNodeWithSchemas is a convenience wrapper for
+    NewAgentNodeWithSchemasTyped[any, any]. It uses explicitly provided schemas
+    for both input and output.
+
+func (n *AgentNode) Run(ctx agent.Context, input any) iter.Seq2[*session.Event, error]
+    Run implements the Node interface.
+
+type BaseNode struct {
+	// Has unexported fields.
+}
+    BaseNode provides identity and a default Config implementation for types
+    that satisfy the Node interface. Custom node types embed BaseNode by value
+    and supply only Run.
+
+func NewBaseNode(name, description string, cfg NodeConfig) BaseNode
+    NewBaseNode returns a BaseNode with the given identity and configuration.
+    Embedders typically call it from their own constructor:
+
+        type CustomNode struct {
+            BaseNode
+            // ...
+        }
+
+        func NewCustomNode(name string, cfg NodeConfig) *CustomNode {
+            return &CustomNode{BaseNode: NewBaseNode(name, "", cfg)}
+        }
+
+func NewBaseNodeWithSchemas(
+	name, description string,
+	cfg NodeConfig,
+	inputSchema, outputSchema *jsonschema.Resolved,
+) BaseNode
+    NewBaseNodeWithSchemas returns a BaseNode with the given identity,
+    configuration, and schemas.
+
+func (b BaseNode) Config() NodeConfig
+    Config returns the node's configuration.
+
+func (b BaseNode) Description() string
+    Description returns the node's human-readable description.
+
+func (b BaseNode) InputSchema() *jsonschema.Resolved
+    InputSchema returns the node's input validation schema.
+
+func (b BaseNode) Name() string
+    Name returns the node's name.
+
+func (b BaseNode) OutputSchema() *jsonschema.Resolved
+    OutputSchema returns the node's output validation schema.
+
+func (b BaseNode) ValidateInput(in any) (any, error)
+    ValidateInput validates and coerces the input using the node's input schema.
+
+func (b BaseNode) ValidateOutput(out any) (any, error)
+    ValidateOutput validates the output against the node's output schema.
+
+type BoolRoute bool
+    BoolRoute is a route defined by a boolean value.
+
+func (r BoolRoute) Matches(event *session.Event) bool
+    Matches reports whether event was routed to this boolean value, compared by
+    its "true"/"false" string form.
+
+type DynamicFn[IN, OUT any] = func(ctx agent.Context, in IN, emit func(*session.Event) error) (OUT, error)
+    DynamicFn is the orchestrator body of a dynamic node. emit publishes
+    mid-body events (state updates, HITL requests, progress); the return value
+    becomes the node's terminal Event.Output.
+
+type Edge struct {
+	From  Node  // The source node
+	To    Node  // The target node
+	Route Route // Routing condition
+}
+    Edge defines a directed connection between nodes in the workflow graph.
+
+func Chain(nodes ...Node) []Edge
+    Chain generates a slice of Edges to form a chain of nodes.
+
+func Concat(items ...any) []Edge
+    Concat combines Edges and []Edge slices into a single slice of edges.
+
+type EdgeBuilder struct {
+	// Has unexported fields.
+}
+    EdgeBuilder provides a fluent API for building a list of Edges.
+
+func NewEdgeBuilder() *EdgeBuilder
+    NewEdgeBuilder creates a new EdgeBuilder.
+
+func (b *EdgeBuilder) Add(from, to Node) *EdgeBuilder
+    Add adds a new edge between two nodes.
+
+func (b *EdgeBuilder) AddFanIn(to Node, from ...Node) *EdgeBuilder
+    AddFanIn adds multiple edges from multiple source nodes to a single target
+    node.
+
+func (b *EdgeBuilder) AddFanOut(from Node, to ...Node) *EdgeBuilder
+    AddFanOut adds multiple edges from a single source node to multiple target
+    nodes.
+
+func (b *EdgeBuilder) AddRoute(from, to Node, route Route) *EdgeBuilder
+    AddRoute adds a new edge with a route condition between two nodes.
+    The route condition is of type any and is converted to a Route interface.
+    Supported routes are StringRoute, IntRoute, BoolRoute and MultiRoute.
+
+func (b *EdgeBuilder) AddRoutes(from Node, routes map[string]Node) *EdgeBuilder
+    AddRoutes adds multiple edges from a single source node to multiple target
+    nodes with different route conditions.
+
+func (b *EdgeBuilder) Build() []Edge
+    Build returns the list of edges.
+
+type EmittingFunctionFn[IN, OUT any] = func(
+	ctx agent.Context, input IN, emit func(*session.Event) error,
+) (OUT, error)
+    EmittingFunctionFn is the streaming variant of a FunctionNode body:
+    it may emit intermediate events before returning the terminal output.
+    The shape mirrors DynamicFn (see dynamic_node.go) without a sub-scheduler.
+
+    To pause for human input, emit a NewRequestInputEvent and return (zero,
+    ErrNodeInterrupted); the engine parks the node and routes the resume payload
+    per NodeConfig.RerunOnResume.
+
+type FunctionNode struct {
+	BaseNode
+
+	// Has unexported fields.
+}
+    FunctionNode wraps a custom function.
+
+    Exactly one of fn or emittingFn is set per node.
+
+func NewEmittingFunctionNode[IN, OUT any](name string, fn EmittingFunctionFn[IN, OUT], cfg NodeConfig) *FunctionNode
+    NewEmittingFunctionNode wraps fn as a streaming FunctionNode whose body
+    may emit intermediate events (HITL prompts, progress, state deltas) before
+    returning. See EmittingFunctionFn for the pause contract.
+
+func NewEmittingFunctionNodeWithSchema[IN, OUT any](name string, fn EmittingFunctionFn[IN, OUT], inputSchema, outputSchema *jsonschema.Schema, cfg NodeConfig) (*FunctionNode, error)
+    NewEmittingFunctionNodeWithSchema is the explicit-schema variant of
+    NewEmittingFunctionNode. A nil schema is inferred from the corresponding
+    generic type.
+
+func NewFunctionNode[IN, OUT any](name string, fn func(ctx agent.Context, input IN) (OUT, error), cfg NodeConfig) *FunctionNode
+    NewFunctionNode creates a new node wrapping a custom function using generics
+    to automatically infer input and output types.
+
+func NewFunctionNodeFromState[Params, OUT any](
+	name string,
+	fn func(ctx agent.InvocationContext, p Params) (OUT, error),
+	cfg NodeConfig,
+) (*FunctionNode, error)
+    NewFunctionNodeFromState returns a FunctionNode whose user function receives
+    a struct-of-parameters loaded from ctx.state. Field names default to the
+    Go field name; override with a struct tag `state:"my_key"`. A field tagged
+    `state:"node_input"` (or named "NodeInput") receives the raw predecessor
+    output instead.
+
+    Params must be a struct type.
+
+func NewFunctionNodeWithSchema[IN, OUT any](name string, fn func(ctx agent.Context, input IN) (OUT, error), inputSchema, outputSchema *jsonschema.Schema, cfg NodeConfig) (*FunctionNode, error)
+    NewFunctionNodeWithSchema creates a new node wrapping a custom function
+    using generics to automatically infer input and output types.
+
+func (n *FunctionNode) Run(ctx agent.Context, input any) iter.Seq2[*session.Event, error]
+    Run executes the function node with the given input and returns an iterator
+    over events.
+
+func (n *FunctionNode) StateFieldNames() []string
+    StateFieldNames returns the list of state keys this node consumes.
+
+type IntRoute int
+    IntRoute is a route defined by an integer value.
+
+func (r IntRoute) Matches(event *session.Event) bool
+    Matches reports whether event was routed to this integer value, compared by
+    its decimal string form.
+
+type JoinNode struct {
+	BaseNode
+}
+    JoinNode is a fan-in barrier. It is activated exactly once, after every
+    predecessor declared by the graph edges has completed, and receives those
+    predecessors' outputs as a single map[string]any keyed by predecessor name.
+    Its own output is that map, emitted verbatim.
+
+    All incoming edges feed the barrier; conditional routing into a JoinNode
+    is a configuration error, because the barrier waits for every declared
+    predecessor and a route-skipped predecessor never fires.
+
+func NewJoinNode(name string) *JoinNode
+    NewJoinNode returns a JoinNode with the given name.
+
+func NewJoinNodeWithSchema(name string, schema *jsonschema.Resolved) *JoinNode
+    NewJoinNodeWithSchema returns a JoinNode with the given name and input
+    schema.
+
+    The input schema is applied to each predecessor's output individually when
+    validation is performed, rather than being applied to the combined map
+    structure itself.
+
+    If a predecessor's output is nil, validation is bypassed and the nil value
+    is preserved.
+
+func (n *JoinNode) Run(ctx agent.Context, input any) iter.Seq2[*session.Event, error]
+    Run satisfies the Node interface. See JoinNode for the aggregation contract.
+
+func (n *JoinNode) ValidateInput(input any) (any, error)
+    ValidateInput overrides BaseNode.ValidateInput. Instead of validating the
+    aggregated map as a single value, it validates each predecessor's output
+    individually against the node's InputSchema.
+
+type MultiRoute[T comparable] []T
+    MultiRoute matches any value within a specified list of allowed routes.
+
+func (r MultiRoute[T]) Matches(event *session.Event) bool
+    Matches reports whether event was routed to any of the values in this list.
+
+type Node interface {
+	Name() string
+	Description() string
+	Config() NodeConfig
+	// InputSchema returns the JSON schema for the node's input.
+	// If it returns nil, it indicates there is no schema and no input validation is performed.
+	InputSchema() *jsonschema.Resolved
+	// OutputSchema returns the JSON schema for the node's output.
+	// If it returns nil, it indicates there is no schema and no output validation is performed.
+	OutputSchema() *jsonschema.Resolved
+	// ValidateInput validates and optionally coerces/transforms the input before the node runs.
+	// It returns the validated input (which might be coerced/parsed/transformed) or an error.
+	// It will be called by the scheduler before Run on every activation.
+	ValidateInput(input any) (any, error)
+	// ValidateOutput validates and optionally coerces/transforms an output emitted by the node.
+	// It returns the validated output (which might be coerced/parsed/transformed) or an error.
+	// The scheduler invokes it on every yielded event with a non-nil output, before forwarding it to the consumer.
+	ValidateOutput(output any) (any, error)
+	Run(ctx agent.Context, input any) iter.Seq2[*session.Event, error]
+}
+    Node is the interface for all nodes in a workflow.
+
+    Custom nodes typically embed BaseNode (constructed via NewBaseNode) to
+    inherit Name, Description, and Config implementations, and supply only Run.
+
+var Start Node = &startNode{
+	BaseNode: NewBaseNode("START", "Start node", NodeConfig{}),
+}
+    Start is a sentinel node used to indicate the entry point of the workflow.
+
+func NewDynamicNode[IN, OUT any](name string, fn DynamicFn[IN, OUT], cfg NodeConfig) Node
+    NewDynamicNode wraps fn as a workflow Node whose execution order is
+    expressed as Go code calling RunNode for each child. cfg.RerunOnResume
+    defaults to &true when nil (needed so resume can re-enter the orchestrator
+    and deliver cached child results); explicit &false is respected.
+
+func NewDynamicNodeWithSchema[IN, OUT any](
+	name string,
+	fn DynamicFn[IN, OUT],
+	inputSchema, outputSchema *jsonschema.Schema,
+	cfg NodeConfig,
+) (Node, error)
+    NewDynamicNodeWithSchema is the explicit-schema variant.
+
+type NodeConfig struct {
+	// ParallelWorker, when true, runs the node concurrently for each
+	// item of a list-typed input. The engine collects per-item
+	// outputs and emits a single aggregate output event.
+	ParallelWorker bool
+
+	// RerunOnResume controls human-in-the-loop resume behaviour:
+	// &true re-runs the interrupted node from scratch on resume
+	// (re-entry mode), &false routes the resume payload to the
+	// node's successor as input (handoff mode), and nil defers to
+	// the engine. The engine currently treats nil as handoff.
+	RerunOnResume *bool
+
+	// WaitForOutput, when true, parks the parent (ErrNodeInterrupted) to
+	// re-run instead of completing it when a child dispatched via RunNode
+	// finishes without setting an event Output — letting a multi-turn
+	// child be retried rather than falsely completed with the zero value.
+	// Only honored on the RunNode (dynamic sub-scheduler) path today. nil
+	// means "use the engine default" — false for most node kinds.
+	WaitForOutput *bool
+
+	// RetryConfig, when non-nil, makes the scheduler retry this node
+	// on failure per the policy. nil means "no retries".
+	RetryConfig *RetryConfig
+
+	// Timeout, when > 0, bounds a single activation of the node via
+	// context.WithTimeout on the per-node context. Zero (the default)
+	// means the node is bounded only by the parent invocation
+	// context's deadline, if any.
+	Timeout time.Duration
+
+	// EmitsOwnSpan, when true, tells the scheduler not to wrap the node
+	// in an "invoke_node" telemetry span because the node body already
+	// starts its own span (e.g. an LlmAgent node whose wrapped agent
+	// emits "invoke_agent"). This keeps the span tree consistent with
+	// the direct agent path and adk-python.
+	EmitsOwnSpan bool
+}
+    NodeConfig defines the configuration for a node.
+
+    All fields are optional. The pointer-typed fields (RerunOnResume,
+    WaitForOutput) are tri-state so node implementations can distinguish "user
+    explicitly opted out" (&false) from "user did not configure" (nil).
+
+type NodeRunError struct {
+	// ChildName is the child's Node.Name(), e.g. "fixer_agent".
+	ChildName string
+	// ChildPath is the composite path, e.g. "code_workflow/fixer_agent@2".
+	ChildPath string
+	// RunID is the per-invocation identifier, auto-counter or
+	// user-supplied via WithRunID.
+	RunID string
+	Cause error
+}
+    NodeRunError wraps a sentinel with the failing child's identity. Use
+    errors.As to recover the fields.
+
+func (e *NodeRunError) Error() string
+    Error formats as "workflow: dynamic child <path>: <cause>".
+
+func (e *NodeRunError) Unwrap() error
+
+type NodeState struct {
+	// Status is the current lifecycle position. See NodeStatus.
+	Status NodeStatus `json:"status"`
+
+	// Input is the value most recently handed to the node's Run
+	// method. It is set when the node is scheduled.
+	Input any `json:"input,omitempty"`
+
+	// Output is the value the node emitted via
+	// Event.Output. Set when Status transitions
+	// to NodeCompleted.
+	Output any `json:"output,omitempty"`
+
+	// TriggeredBy is the name of the upstream node that produced
+	// the current Input. Empty for the initial START activation.
+	TriggeredBy string `json:"triggeredBy,omitempty"`
+
+	// Branch is the composite branch string assigned to this
+	// activation at scheduling time. Empty for nodes that inherit
+	// the root branch (single-successor chains); populated for
+	// nodes scheduled after a fan-out and for JoinNodes resolving
+	// the common branch prefix of their predecessors.
+	//
+	// Persisted so resume can reconstruct the same branch tree on
+	// re-entry, which is required for JoinNode's common-prefix
+	// derivation to remain stable across pause/resume turns.
+	Branch string `json:"branch,omitempty"`
+
+	// Interrupts holds the long-running tool call IDs the node is
+	// waiting on. Non-empty iff Status == NodeWaiting due to a
+	// long-running tool pause; lets resume match a human's
+	// FunctionResponse to the node. Mirrors adk-python
+	// NodeState.interrupts.
+	Interrupts []string `json:"interrupts,omitempty"`
+
+	// Attempt is the number of times this node has been failed.
+	Attempt int `json:"attempt,omitempty"`
+
+	// ResumedInputs accumulates response payloads for re-entry-mode
+	// nodes that yield RequestInput more than once during a single
+	// activation lifecycle. Each Resume call adds the new response
+	// keyed by its InterruptID. The map is exposed to the node via
+	// ctx.ResumedInput on every re-entry activation, so the node
+	// can observe responses to all prior requests, not only the
+	// most recent one.
+	//
+	// Cleared when the node transitions to NodeCompleted; absent
+	// for handoff-mode nodes (where successors receive the response
+	// as input and the asker never re-runs).
+	ResumedInputs map[string]any `json:"resumedInputs,omitempty"`
+	// Has unexported fields.
+}
+    NodeState is the per-node lifecycle record. A RunState holds one of these
+    for every node the engine has touched.
+
+    JSON-marshallable: NodeState is persisted across pause/resume
+    turns via session.State (see persistence.go). The Input, Output,
+    and PendingRequest.Payload fields are typed any and must therefore be
+    JSON-encodable for the persisted state to round-trip. Nodes that need to
+    carry binary data across a pause should store the bytes via agent.Artifacts
+    and stash a URI string in place of the bytes.
+
+type NodeStatus uint8
+    NodeStatus is the lifecycle status of a node in the workflow graph.
+
+    The status is the engine's single source of truth for what a node is doing.
+    It mediates between the trigger buffer (what wants to run), the in-process
+    task table (what is currently running), and the persisted node history (what
+    has run).
+
+const (
+	// NodeInactive means the node has not been touched yet. This is
+	// the zero value.
+	NodeInactive NodeStatus = iota
+
+	// NodePending means the node is ready to run. It may be queued
+	// because its input has arrived (consumed from the trigger
+	// buffer) or because it is being retried after a failure. The
+	// scheduler may keep a NodePending node from starting if the
+	// engine's max-concurrency cap is reached.
+	NodePending
+
+	// NodeRunning means the engine has started a task for this node.
+	// The task is in flight in the current process. A NodeRunning
+	// entry that has no live task in the run state (e.g. after a
+	// process restart) must be re-scheduled.
+	NodeRunning
+
+	// NodeCompleted means the node finished and produced its output.
+	// This is a terminal status for normal execution, but a node in
+	// NodeCompleted may still be re-triggered by a fresh entry in
+	// the trigger buffer (this is what enables loops as graph
+	// cycles).
+	NodeCompleted
+
+	// NodeWaiting means the node is paused. Two cases share this
+	// status:
+	//
+	//   1. Human-in-the-loop: the node yielded a RequestInput and
+	//      is blocked until a function-response payload resumes it.
+	//   2. Fan-in (WaitForOutput=true, e.g. JoinNode): the node ran
+	//      but did not yet produce its final output because not all
+	//      predecessors have triggered it.
+	//
+	// While any node is NodeWaiting the workflow does not finalize.
+	NodeWaiting
+
+	// NodeFailed means the node returned an error and the retry
+	// policy (if any) has been exhausted. Terminal.
+	NodeFailed
+
+	// NodeCancelled means the node was cancelled: either because a
+	// sibling node failed and the engine cancelled all running tasks,
+	// or because the invocation context was cancelled from outside the
+	// engine. Terminal in both cases — the two are told apart by
+	// whether the run reports an error, not by this status.
+	NodeCancelled
+)
+type Option func(*workflowOptions)
+    Option configures a Workflow at construction time. Pass options as trailing
+    variadic arguments to New.
+
+func WithMaxConcurrency(n int) Option
+    WithMaxConcurrency caps how many graph-scheduled nodes may run concurrently
+    in a single Workflow invocation; nodes beyond the cap queue as NodePending.
+    n <= 0 disables the cap (unlimited).
+
+    Does NOT apply to dynamic sub-nodes invoked via workflow.RunNode from inside
+    a DynamicNode body — they are awaited inline by the parent and gating them
+    would deadlock.
+
+func WithRootWrapper() Option
+    WithRootWrapper marks this workflow as a synthetic single-node wrapper
+    created by Runner.runNode to drive a standalone agent.
+
+    Architectural note: Unlike Go, Python ADK does not wrap standalone agents in
+    a synthetic workflow (Python's Runner.run drives agent.run_async directly).
+    Go introduced this wrapper so all agent execution rides through a unified
+    graph engine. When marked as a root wrapper, Workflow.Run does not stamp
+    an extraneous parent namespace prefix ("app/agent@1") onto root contexts,
+    maintaining strict path parity with Python reference recordings.
+
+func WithStateSchema(s *jsonschema.Resolved) Option
+    WithStateSchema sets the state schema for the workflow.
+
+type ParallelWorker struct {
+	BaseNode
+
+	// Has unexported fields.
+}
+    ParallelWorker runs a wrapped node in parallel for each item in the input
+    list.
+
+func NewParallelWorker(name string, wrapped Node, maxConcurrency int, cfg NodeConfig) (*ParallelWorker, error)
+    NewParallelWorker creates a new ParallelWorker node. maxConcurrency <= 0
+    means no limit on concurrency.
+
+func (n *ParallelWorker) Run(ctx agent.Context, input any) iter.Seq2[*session.Event, error]
+    Run executes the wrapped node in parallel for each item in the input list.
+    It aggregates the "output" from each wrapped node execution into a list and
+    yields a single final event with the aggregated list as output.
+
+    RetryConfig in the wrapped nodes are not allowed, only the parent node
+    (ParallelWorker) will be respected. Each failed input will be retried based
+    on the RetryConfig independently from other inputs. Which means for the
+    input: []any{"a", "b", "c"}, if "b" always fails, and MaxAttempt is 3 the
+    ParallelWorker will perform 1 ("a") + 3 ("b" retried) + 1 ("c") = 5 calls in
+    total.
+
+    If any of the wrapped node executions returns a non-retryable error,
+    the workflow will fail fast, cancel other in-flight workers, and return this
+    first encountered error.
+
+    In case the wrapped node produces more then one output event, they will be
+    aggregated into a list, and the final result will be a multi dimensional
+    list.
+
+    Intermediate non-output events emitted by the wrapped node are suppressed.
+
+type RetryConfig struct {
+	// Maximum number of attempts, including the original request. If 0 or 1, it means no retries. If not specified, default to 5.
+	MaxAttempts int
+
+	// Initial delay before the first retry, in fractions of a second. If not specified, default to 1 second.
+	InitialDelay time.Duration
+
+	// Maximum delay between retries, in fractions of a second. If not specified, default to 60 seconds.
+	MaxDelay time.Duration
+
+	// BackoffFactor is the per-attempt multiplier applied to the
+	// delay. A factor of 1.0 means a constant InitialDelay between
+	// retries; 2.0 means classic exponential backoff. Values < 1.0
+	// shrink the delay each attempt (rare but permitted).
+	BackoffFactor float64
+
+	// Jitter is a randomness factor in [0.0, 1.0]. The actual delay
+	// is sampled from delay * (1 ± Jitter). Zero means deterministic
+	// delays.
+	Jitter float64
+
+	// Predicate that defines when to retry (true means retry). If not specified, default to true.
+	ShouldRetry func(error) bool
+}
+    RetryConfig defines the parameters for retrying a failed node.
+
+    Recommended construction is via DefaultRetryConfig and override the fields
+    you want to customize:
+
+        rc := workflow.DefaultRetryConfig()
+        rc.MaxAttempts = 10
+        cfg := workflow.NodeConfig{RetryConfig: rc}
+
+    Constructing via struct literal (RetryConfig{...}) is permitted
+    but discouraged: any unset field defaults to its zero value, not to
+    DefaultRetryConfig's value. The zero RetryConfig is a valid "no retry,
+    no backoff, no jitter" policy.
+
+    The struct shape is deliberately a flat set of plain values: no dependency
+    on cenkalti/backoff/v5.
+
+func DefaultRetryConfig() *RetryConfig
+    DefaultRetryConfig returns a copy of the default retry policy (5 attempts,
+    1s initial delay, 60s cap, 2x backoff, full jitter, retry every error).
+    Override fields on the returned value to customise:
+
+        rc := workflow.DefaultRetryConfig()
+        rc.MaxAttempts = 10
+        cfg := workflow.NodeConfig{RetryConfig: rc}
+
+type Route interface {
+	Matches(event *session.Event) bool
+}
+    Route defines the interface for matching execution results to edges.
+
+var Default Route = &defaultRoute{}
+    Default is a special route that matches when no other concrete routes match.
+
+type RunNodeOption func(*runNodeOptions)
+    RunNodeOption configures a single RunNode call.
+
+func WithIsolationScope(scope string) RunNodeOption
+    WithIsolationScope tags the child and its emitted events with scope,
+    restricting the child's LLM history to matching events (see
+    session.Event.IsolationScope). Empty means no scope.
+
+func WithIsolationScopeFromNodePath() RunNodeOption
+    WithIsolationScopeFromNodePath scopes the child under its own node path.
+    The full path (not just "<name>@<run_id>") keeps scopes unique across
+    nested workflows and reused node names. This is the task-mode LlmAgent case.
+    WithIsolationScope, if also set, takes precedence.
+
+func WithOverrideBranch(branch string) RunNodeOption
+    WithOverrideBranch replaces the inherited branch verbatim, regardless
+    of WithUseSubBranch. Useful for nested dispatch patterns (e.g. chat
+    coordinator → task agent) where the parent assigns a specific branch label
+    by convention.
+
+    Combinable with WithUseSubBranch: the override sets the base, and the
+    sub-branch segment "<childName>@<runID>" is appended.
+
+    Empty branch is treated as "no override". To force root, pass
+    WithUseSubBranch() alone, which derives a fresh sub-branch off root.
+
+func WithRaiseOnWait() RunNodeOption
+    WithRaiseOnWait makes RunNode treat a child that finishes its iteration with
+    an unresolved long-running tool call as an interruption rather than a normal
+    completion.
+
+    Use this when the caller (e.g. a chat-mode coordinator dispatching a task
+    sub-agent via a FunctionCall) MUST distinguish "child paused waiting for
+    HITL" from "child finished cleanly with no output".
+
+func WithRunID(id string) RunNodeOption
+    WithRunID overrides the auto-generated counter with a stable user-supplied
+    identifier — useful for reorderable lists keyed by e.g. an order id. id must
+    be non-empty, contain at least one non-digit character (purely numeric ids
+    collide with the auto-counter), and exclude the composite-path separators
+    '/' and '@'. Violations surface as ErrInvalidRunID from RunNode.
+
+    Mirrors adk-python's run_id kwarg
+    (https://adk.dev/graphs/dynamic/#custom-execution-ids).
+
+func WithUseAsOutput() RunNodeOption
+    WithUseAsOutput promotes this child's output to the parent dynamic node's
+    terminal Output, discarding the value returned by the orchestrator body.
+    At most one delegating child per parent activation; a second one fails with
+    ErrOutputAlreadyDelegated.
+
+func WithUseSubBranch() RunNodeOption
+    WithUseSubBranch derives a per-child sub-branch of the form
+    "<parentBranch>.<childName>@<runID>" (or just "<childName>@<runID>" at root)
+    for the child activation.
+
+    Use this when the caller runs multiple concurrent or independent children
+    that should not see each other's events in their LLM prompt history. Without
+    it, every RunNode child inherits the orchestrator's branch and an LlmAgent
+    child would see sibling events through the LLM flow's history filter.
+
+    Combinable with WithOverrideBranch: the override sets the base, and the
+    sub-branch segment is appended to it.
+
+type RunState struct {
+	// Nodes is the per-node lifecycle map. Absent entries are
+	// inactive.
+	Nodes map[string]*NodeState `json:"nodes,omitempty"`
+
+	// Has unexported fields.
+}
+    RunState is the per-invocation lifecycle state for a workflow run. It rides
+    in session.State across pause and resume turns so the workflow can pick up
+    where a previous invocation left off.
+
+func NewRunState() *RunState
+    NewRunState returns an empty state with the Nodes map initialised so callers
+    can write to it without a nil check.
+
+func (s *RunState) EnsureNode(name string) *NodeState
+    EnsureNode returns the NodeState for the given node name, creating an
+    inactive entry if none exists. The returned pointer is owned by the state
+    and may be mutated in place.
+
+type StateParamsAware interface {
+	StateFieldNames() []string
+}
+    StateParamsAware is implemented by nodes that bind their parameters from
+    ctx.state. Used by Workflow's static state-schema validation to detect
+    mismatches between declared state fields and node consumers.
+
+type StringRoute string
+    StringRoute is a route defined by a string value.
+
+func (r StringRoute) Matches(event *session.Event) bool
+    Matches reports whether event was routed to this string value.
+
+type ToolNode struct {
+	BaseNode
+	// Has unexported fields.
+}
+    ToolNode wraps a tool from the tool package.
+
+func NewNamedToolNode(name string, t tool.Tool, cfg NodeConfig) (*ToolNode, error)
+    NewNamedToolNode creates a new node wrapping a tool with an explicit node
+    name.
+
+func NewToolNode(t tool.Tool, cfg NodeConfig) (*ToolNode, error)
+    NewToolNode creates a new node wrapping a tool. Input and output schemas are
+    inferred as 'any'.
+
+func NewToolNodeTyped[Input, Output any](t tool.Tool, cfg NodeConfig) (*ToolNode, error)
+    NewToolNodeTyped creates a new node wrapping a tool using generics to
+    automatically infer input and output schemas from the provided types.
+
+func NewToolNodeWithSchemas(t tool.Tool, inputSchema, outputSchema *jsonschema.Schema, cfg NodeConfig) (*ToolNode, error)
+    NewToolNodeWithSchemas is a convenience wrapper for
+    NewToolNodeWithSchemasTyped[any, any]. It uses explicitly provided schemas
+    for both input and output.
+
+func (n *ToolNode) Run(ctx agent.Context, input any) iter.Seq2[*session.Event, error]
+    Run implements the Node interface and executes the tool.
+
+func (n *ToolNode) ValidateOutput(out any) (any, error)
+    ValidateOutput validates the tool output against the node's output schema,
+    adding a FunctionTool-specific fallback on top of the default behavior:
+    when the output is a map of shape {"result": X} that fails direct schema
+    validation, it retries against the unwrapped "result" value and, on success,
+    returns that unwrapped value.
+
+    This override is the home for the {"result": X} convention because it is
+    tool-specific; making it a general default could mask genuine validation
+    errors in other node types.
+
+type Workflow struct {
+	// Has unexported fields.
+}
+    Workflow manages the workflow graph execution.
+
+func New(name string, edges []Edge, opts ...Option) (*Workflow, error)
+    New creates a new Workflow engine with the given name and edges.
+
+    The name forms part of the session.State key under which this workflow's
+    RunState is persisted (see RunStateSessionKey for the exact key shape).
+    It must be unique within any session that runs more than one workflow:
+    two workflows sharing a name and a session will silently overwrite each
+    other's RunState, leading to corrupted resume behaviour. The same workflow
+    may safely share a name across different sessions.
+
+    An empty name disables persistence: the workflow runs normally but its
+    RunState is neither saved nor loaded, so Resume on a follow-up turn will
+    find nothing to resume from.
+
+    Optional Option values configure engine behaviour (concurrency cap, etc.);
+    see WithMaxConcurrency.
+
+func (w *Workflow) Name() string
+    Name returns the workflow's persistence-namespacing name as set by New.
+    Empty when the workflow is anonymous (does not persist its RunState).
+
+func (w *Workflow) ReconstructRunState(sess session.Session, invocationID string) (*RunState, error)
+    ReconstructRunState rebuilds the paused RunState by scanning session
+    history instead of loading a persisted blob, mirroring adk-python's
+    rehydration (workflow/utils/_rehydration_utils.py: _reconstruct_node_states
+    + _workflow.py:_infer_node_state).
+
+    For each node it collects the long-running interrupts it raised
+    (Event.LongRunningToolIDs, attributed by event node path), the user
+    FunctionResponses that resolved them, and each interrupt's declared response
+    schema. inferNodeState then maps that scan to a NodeState (WAITING /
+    PENDING+ResumedInputs / COMPLETED+Output). Returns (nil, nil) when no node
+    has interrupt history.
+
+    invocationID scopes the scan to a single logical run: events from other
+    invocations are skipped, so a fresh run started in a session that already
+    holds a completed run does not collide with it (a stable InterruptID reused
+    across runs would otherwise rehydrate against the prior, already-resolved
+    interrupt). The runner reuses the paused run's invocation ID for the resume
+    turn, so the pause and its reply share it. Empty invocationID disables the
+    filter (scan all history). Mirrors adk-python _reconstruct_node_states'
+    invocation_id gate.
+
+func (w *Workflow) Resume(
+	ctx agent.Context,
+	state *RunState,
+	responses map[string]any,
+) iter.Seq2[*session.Event, error]
+    Resume continues a previously paused workflow run. state is the RunState
+    loaded from session storage; responses maps RequestInput.InterruptID to the
+    user-supplied response payload.
+
+    For each waiting node whose InterruptID has a matching entry in responses,
+    Resume:
+
+     1. Validates the payload against PendingRequest.ResponseSchema, if non-nil.
+        A mismatch surfaces as ErrInvalidResumeResponse via the iterator and
+        leaves the node in NodeWaiting with PendingRequest intact.
+
+     2. Consumes the pending request (clears PendingRequest, sets Status =
+        NodePending) before re-scheduling, so a duplicate Resume call with the
+        same InterruptID becomes a no-op.
+
+     3. Routes the response to the asker's successors as if the asker had
+        emitted it as its output (handoff mode). The asker itself does NOT
+        re-execute.
+
+    Waiting nodes whose InterruptID is absent from responses remain in
+    NodeWaiting unchanged.
+
+    If responses is non-empty but no waiting node matches any InterruptID in it,
+    Resume yields ErrNothingToResume so the caller can distinguish a successful
+    resume from a stale or mistargeted submission. An empty responses map (or
+    nil state) is treated as a clean no-op with no error.
+
+func (w *Workflow) Run(ctx agent.InvocationContext) iter.Seq2[*session.Event, error]
+    Run drives the workflow to completion or to a graceful pause when any node
+    enters NodeWaiting. It returns an iter.Seq2 that yields events from per-node
+    goroutines in arrival order; the caller may break from the range loop at any
+    point and the engine will cancel all in-flight nodes before returning.
+
+    The engine model: each scheduled node runs in its own goroutine pushing
+    events into a buffered channel. A single consumer goroutine (this one)
+    drains the channel, applies state-side effects, yields events to the caller,
+    and schedules successors when nodes complete. The consumer is the only
+    mutator of the per-node lifecycle map and of session state.
+
+func (w *Workflow) RunNode(ctx agent.Context, input any) iter.Seq2[*session.Event, error]
+    RunNode drives the workflow with the given input. This is used by
+    WorkflowNode to run nested workflows.
+
+type WorkflowNode struct {
+	BaseNode
+	// Has unexported fields.
+}
+    WorkflowNode wraps a Workflow to be used as a Node.
+
+func NewWorkflowNode(name string, edges []Edge) (*WorkflowNode, error)
+    NewWorkflowNode creates a new node that runs a nested workflow. It uses the
+    same arguments as New to construct the inner workflow.
+
+func (n *WorkflowNode) Run(ctx agent.Context, input any) iter.Seq2[*session.Event, error]
+    Run executes the sub-workflow with the given input.
+
+    The sub-workflow's output is the output of its terminal node(s) — nodes with
+    no outgoing edges — selected by graph topology, not by event arrival order.
+    Exactly one terminal output is forwarded as this node's output; more than
+    one is a graph-design error (ErrMultipleOutputs); zero means the node
+    produces no output. Mirrors adk-python's _set_ctx_output_or_interrupts.
+

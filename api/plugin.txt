@@ -1,0 +1,99 @@
+package plugin // import "google.golang.org/adk/v2/plugin"
+
+Package plugin provides lifecycle hooks that observe and intercept an agent run,
+exposing Before*/After* callbacks for the run, agent, model, and tool stages.
+
+TYPES
+
+type AfterRunCallback func(agent.InvocationContext)
+    AfterRunCallback is invoked after a run completes.
+
+type BeforeRunCallback func(agent.InvocationContext) (*genai.Content, error)
+    BeforeRunCallback is invoked before a run starts, and may return content
+    that short-circuits the run.
+
+type Config struct {
+	Name string
+
+	OnUserMessageCallback OnUserMessageCallback
+
+	OnEventCallback OnEventCallback
+
+	BeforeRunCallback BeforeRunCallback
+	AfterRunCallback  AfterRunCallback
+
+	BeforeAgentCallback agent.BeforeAgentCallback
+	AfterAgentCallback  agent.AfterAgentCallback
+
+	BeforeModelCallback  llmagent.BeforeModelCallback
+	AfterModelCallback   llmagent.AfterModelCallback
+	OnModelErrorCallback llmagent.OnModelErrorCallback
+
+	BeforeToolCallback  llmagent.BeforeToolCallback
+	AfterToolCallback   llmagent.AfterToolCallback
+	OnToolErrorCallback llmagent.OnToolErrorCallback
+
+	CloseFunc func() error
+}
+    Config configures a Plugin, supplying its name and the lifecycle callbacks
+    it registers for the run, agent, model, and tool stages.
+
+type OnEventCallback func(agent.InvocationContext, *session.Event) (*session.Event, error)
+    OnEventCallback is invoked for each event, and may return a replacement
+    event.
+
+type OnUserMessageCallback func(agent.InvocationContext, *genai.Content) (*genai.Content, error)
+    OnUserMessageCallback is invoked when the user sends a message, and may
+    return a replacement message.
+
+type Plugin struct {
+	// Has unexported fields.
+}
+    Plugin holds a set of lifecycle callbacks that observe and intercept an
+    agent run. Create one with New.
+
+func New(cfg Config) (*Plugin, error)
+    New creates a Plugin from cfg.
+
+func (p *Plugin) AfterAgentCallback() agent.AfterAgentCallback
+    AfterAgentCallback returns the plugin's AfterAgentCallback.
+
+func (p *Plugin) AfterModelCallback() llmagent.AfterModelCallback
+    AfterModelCallback returns the plugin's AfterModelCallback.
+
+func (p *Plugin) AfterRunCallback() AfterRunCallback
+    AfterRunCallback returns the plugin's AfterRunCallback.
+
+func (p *Plugin) AfterToolCallback() llmagent.AfterToolCallback
+    AfterToolCallback returns the plugin's AfterToolCallback.
+
+func (p *Plugin) BeforeAgentCallback() agent.BeforeAgentCallback
+    BeforeAgentCallback returns the plugin's BeforeAgentCallback.
+
+func (p *Plugin) BeforeModelCallback() llmagent.BeforeModelCallback
+    BeforeModelCallback returns the plugin's BeforeModelCallback.
+
+func (p *Plugin) BeforeRunCallback() BeforeRunCallback
+    BeforeRunCallback returns the plugin's BeforeRunCallback.
+
+func (p *Plugin) BeforeToolCallback() llmagent.BeforeToolCallback
+    BeforeToolCallback returns the plugin's BeforeToolCallback.
+
+func (p *Plugin) Close() error
+    Close safely calls the internal close function.
+
+func (p *Plugin) Name() string
+    Name returns the name of the plugin.
+
+func (p *Plugin) OnEventCallback() OnEventCallback
+    OnEventCallback returns the plugin's OnEventCallback.
+
+func (p *Plugin) OnModelErrorCallback() llmagent.OnModelErrorCallback
+    OnModelErrorCallback returns the plugin's OnModelErrorCallback.
+
+func (p *Plugin) OnToolErrorCallback() llmagent.OnToolErrorCallback
+    OnToolErrorCallback returns the plugin's OnToolErrorCallback.
+
+func (p *Plugin) OnUserMessageCallback() OnUserMessageCallback
+    OnUserMessageCallback returns the plugin's OnUserMessageCallback.
+

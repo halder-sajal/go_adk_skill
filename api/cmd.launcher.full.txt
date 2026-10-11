@@ -1,0 +1,10 @@
+package full // import "google.golang.org/adk/v2/cmd/launcher/full"
+
+Package full provides easy way to play with ADK with all available options
+
+FUNCTIONS
+
+func NewLauncher() launcher.Launcher
+    NewLauncher returnes the most versatile universal launcher with all options
+    built-in.
+

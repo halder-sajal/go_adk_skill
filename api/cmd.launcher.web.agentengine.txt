@@ -1,0 +1,10 @@
+package agentengine // import "google.golang.org/adk/v2/cmd/launcher/web/agentengine"
+
+Package agentengine provides a sublauncher that provides web interface as
+required by Agent Engine
+
+FUNCTIONS
+
+func NewLauncher(agentEngineId string) weblauncher.Sublauncher
+    NewLauncher creates new api launcher. It extends Web launcher
+

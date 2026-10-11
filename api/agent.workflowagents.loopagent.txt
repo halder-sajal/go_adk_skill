@@ -1,0 +1,29 @@
+package loopagent // import "google.golang.org/adk/v2/agent/workflowagents/loopagent"
+
+Package loopagent provides an agent that repeatedly runs its sub-agents for a
+specified number of iterations or until termination condition is met.
+
+FUNCTIONS
+
+func New(cfg Config) (agent.Agent, error)
+    New creates a LoopAgent.
+
+    LoopAgent repeatedly runs its sub-agents in sequence for a specified number
+    of iterations or until a termination condition is met.
+
+    Use the LoopAgent when your workflow involves repetition or iterative
+    refinement, such as like revising code.
+
+
+TYPES
+
+type Config struct {
+	// Basic agent setup.
+	AgentConfig agent.Config
+
+	// If MaxIterations == 0, then LoopAgent runs indefinitely or until any
+	// sub-agent escalates.
+	MaxIterations uint
+}
+    Config defines the configuration for a LoopAgent.
+

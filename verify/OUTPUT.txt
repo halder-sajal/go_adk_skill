@@ -1,0 +1,52 @@
+# go run . (v2.4.0)
+===== chain
+  author=chain path=chain@1/upper@1 out=HI routes=[] text="" req=false delta=map[]
+  author=chain path=chain@1/suffix@1 out=HI! routes=[] text="" req=false delta=map[]
+===== loop
+  author=loop path=loop@1/seed@1 out=0 routes=[] text="" req=false delta=map[]
+  author=loop path=loop@1/inc@1 out=1 routes=[again] text="" req=false delta=map[]
+  author=loop path=loop@1/inc@1 out=2 routes=[again] text="" req=false delta=map[]
+  author=loop path=loop@1/inc@1 out=3 routes=[done] text="" req=false delta=map[]
+  author=loop path=loop@1/fin@1 out=final=3 routes=[] text="" req=false delta=map[]
+===== fanin
+  author=fanin path=fanin@1/b@1 out=B:x routes=[] text="" req=false delta=map[]
+  author=fanin path=fanin@1/a@1 out=A:x routes=[] text="" req=false delta=map[]
+  author=fanin path=fanin@1/join@1 out=map[a:A:x b:B:x] routes=[] text="" req=false delta=map[]
+  author=fanin path=fanin@1/sum@1 out=A:x|B:x routes=[] text="" req=false delta=map[]
+===== parallel
+  author=parallel path=parallel@1/split@1 out=[aa bbb c] routes=[] text="" req=false delta=map[]
+  author=parallel path=parallel@1/lens@1 out=[2 3 1] routes=[] text="" req=false delta=map[]
+===== dynamic
+  author=dynamic path=dynamic@1/orch@1/child@item-1 out=10 routes=[] text="" req=false delta=map[]
+  author=dynamic path=dynamic@1/orch@1/child@item-2 out=20 routes=[] text="" req=false delta=map[]
+  author=dynamic path=dynamic@1/orch@1/child@item-3 out=30 routes=[] text="" req=false delta=map[]
+  author=dynamic path=dynamic@1/orch@1 out=<nil> routes=[] text="" req=false delta=map[total:60]
+  author=dynamic path=dynamic@1/orch@1 out=60 routes=[] text="" req=false delta=map[]
+  author=dynamic path=dynamic@1/read_state@1 out=state.total=60 input=60 routes=[] text="" req=false delta=map[]
+===== hitl
+  author=hitl path=hitl@1/ask@1 out=<nil> routes=[] text="" req=true delta=map[]
+  author=hitl path=greet@1 out=hello Alice routes=[] text="" req=false delta=map[]
+===== fan-in without JoinNode: non-JoinNode fan-in is not yet supported: node "sum" has 2 unconditional incoming edges; use a JoinNode to converge branches
+===== unconditional cycle: unconditional cycle detected: "a"
+
+# go run ./checks
+string->int typed edge: <nil>
+string->any->int: <nil>
+chat after non-start: Agent "chatty" has mode='chat' and cannot follow node "s": chat agents rely on conversation history and cannot consume a predecessor's node input. Use mode='single_turn', or wire the agent directly from Start
+task node: Agent "tasky" has mode='task' and cannot be used as a workflow graph node. Use a chat coordinator with task sub-agents, or dispatch dynamically via RunNode from a function node
+Arguments: Specify one of the following:
+  * console - runs an agent in console mode.
+
+# go run ./checks2
+42 out=42 (string)
+42 ERR: new function node: invalid input type, expected *int: json: cannot unmarshal string into Go value of type int
+abc out=abc (string)
+abc ERR: new function node: invalid input type, expected *int: json: cannot unmarshal string into Go value of type int
+
+# go run ./recipes selftest
+output: done:c
+output: done:b
+output: done:a
+output: [done:a done:b done:c]
+output: [done:a done:b done:c]
+llm graphs build OK

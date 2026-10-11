@@ -1,0 +1,306 @@
+package controllers // import "google.golang.org/adk/v2/server/adkrest/controllers"
+
+Package controllers contains the controllers for the ADK REST API.
+
+CONSTANTS
+
+const NotInstalledDetail = "not installed"
+    NotInstalledDetail is the marker the ADK web UI looks for to tell "this
+    server cannot run evals" apart from "this eval run failed".
+
+    The UI inspects the error detail of a failed eval run for the substring
+    "not installed" and, when it matches, raises its own eval-unavailable notice
+    rather than reporting a transport error. Any detail the eval endpoints
+    return must therefore contain this phrase.
+
+    An earlier version of this file answered the eval endpoints with 404
+    instead, on the theory that the UI hides its Evals tab on a 404. It does
+    not: the eval tab component emits that decision on a shouldShowTab output,
+    and the side panel that hosts the component subscribes to four of its
+    outputs but not that one. The signal goes nowhere, so 501 is used,
+    consistently with every other unimplemented developer endpoint.
+
+
+FUNCTIONS
+
+func AgentBuilderConfigHandler(rw http.ResponseWriter, _ *http.Request)
+    AgentBuilderConfigHandler answers the agent builder's request for an app's
+    stored configuration.
+
+    It returns an empty document, not an error. ADK Go agents are defined in Go
+    code, so there is no editable configuration to hand back, and the UI reads
+    an empty body as "nothing to edit here" and disables the builder toggle.
+    An error status would make it log a failure for a question that has a
+    correct empty answer.
+
+func EncodeJSONResponse(i any, status int, w http.ResponseWriter)
+    EncodeJSONResponse uses the json encoder to write an interface to the http
+    response with an optional status code
+
+func MetricsInfoHandler(rw http.ResponseWriter, _ *http.Request)
+    MetricsInfoHandler reports the eval metrics this server supports, which is
+    none. An empty list is the accurate answer and keeps the client from logging
+    a transport error for a question that has a valid empty result.
+
+func NewErrorHandler(fn errorHandler) http.HandlerFunc
+    NewErrorHandler writes the error code returned from the http handler.
+
+func NewNotImplementedHandler(feature, detail string) http.HandlerFunc
+    NewNotImplementedHandler returns a handler that reports 501 for a route
+    ADK Go serves but does not implement. 501 tells a client the endpoint is
+    recognised and the feature is missing, which is the difference between "this
+    server is a different version" and "this server cannot do that".
+
+func Unimplemented(rw http.ResponseWriter, _ *http.Request)
+    Unimplemented returns 501 with no body.
+
+    Deprecated: use NewNotImplementedHandler, which returns a JSON body naming
+    the missing feature. A body-less 501 tells a client nothing about what it
+    asked for. Kept because this is an exported symbol in a public package.
+
+
+TYPES
+
+type AgentGraphAPIController struct {
+	// Has unexported fields.
+}
+    AgentGraphAPIController serves the agent-structure endpoints that back the
+    "Agent structure" panel of the ADK web UI.
+
+func NewAgentGraphAPIController(agentLoader agent.Loader) *AgentGraphAPIController
+    NewAgentGraphAPIController creates a new AgentGraphAPIController.
+
+func (c *AgentGraphAPIController) BuildGraphHandler(rw http.ResponseWriter, req *http.Request)
+    BuildGraphHandler returns the agent tree for an app, used by the UI to build
+    the breadcrumb navigation over the agent structure.
+
+func (c *AgentGraphAPIController) BuildGraphImageHandler(rw http.ResponseWriter, req *http.Request)
+    BuildGraphImageHandler returns Graphviz DOT source for an app's agent tree.
+
+    The response shape depends on the request, because the UI calls this
+    endpoint two different ways. With a "node" query parameter it asks for one
+    subtree and expects a bare {"dotSrc": …}. Without one it preloads every
+    level and expects a map keyed by agent path; the root agent's own name maps
+    to the root level.
+
+type AgentNode struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	SubAgents   []AgentNode `json:"sub_agents"`
+}
+    AgentNode describes one agent in the tree returned by BuildGraphHandler.
+    The web UI walks children by looking for a "sub_agents" array whose entries
+    carry a "name", so those two field names are part of the client contract.
+
+type AppInfoResponse struct {
+	RootAgent AgentNode `json:"root_agent"`
+	// Readme is always empty: ADK Go agents are defined in code, so there is no
+	// agent directory to read a README from.
+	Readme string `json:"readme"`
+}
+    AppInfoResponse is the body of the build_graph endpoint.
+
+type AppsAPIController struct {
+	// Has unexported fields.
+}
+    AppsAPIController is the controller for the Apps API.
+
+func NewAppsAPIController(agentLoader agent.Loader) *AppsAPIController
+    NewAppsAPIController creates a controller for Apps API.
+
+func (c *AppsAPIController) ListAppsHandler(rw http.ResponseWriter, req *http.Request)
+    ListAppsHandler handles listing all loaded agents.
+
+type ArtifactsAPIController struct {
+	// Has unexported fields.
+}
+    ArtifactsAPIController is the controller for the Artifacts API.
+
+func NewArtifactsAPIController(artifactService artifact.Service) *ArtifactsAPIController
+    NewArtifactsAPIController creates an ArtifactsAPIController backed by the
+    given artifact service.
+
+func (c *ArtifactsAPIController) DeleteArtifactHandler(rw http.ResponseWriter, req *http.Request)
+    DeleteArtifactHandler handles deleting an artifact.
+
+func (c *ArtifactsAPIController) ListArtifactsHandler(rw http.ResponseWriter, req *http.Request)
+    ListArtifactsHandler lists all the artifact filenames within a session.
+
+func (c *ArtifactsAPIController) LoadArtifactHandler(rw http.ResponseWriter, req *http.Request)
+    LoadArtifactHandler gets an artifact from the artifact service storage.
+
+func (c *ArtifactsAPIController) LoadArtifactVersionHandler(rw http.ResponseWriter, req *http.Request)
+    LoadArtifactVersionHandler gets an artifact from the artifact service
+    storage with specified version.
+
+func (c *ArtifactsAPIController) WithAuthorizer(authorizer authz.Authorizer)
+    WithAuthorizer sets the authorizer for the controller. Can be used as an
+    option in NewArtifactsAPIController.
+
+type DebugAPIController struct {
+	// Has unexported fields.
+}
+    DebugAPIController is the controller for the Debug API.
+
+func NewDebugAPIController(sessionService session.Service, agentLoader agent.Loader, spansExporter *services.DebugTelemetry) *DebugAPIController
+    NewDebugAPIController creates the controller for the Debug API.
+
+func (c *DebugAPIController) EventGraphHandler(rw http.ResponseWriter, req *http.Request)
+    EventGraphHandler returns the debug information for the session and session
+    events in form of graph.
+
+func (c *DebugAPIController) EventSpanHandler(rw http.ResponseWriter, req *http.Request)
+    EventSpanHandler returns the debug span for the event.
+
+func (c *DebugAPIController) SessionSpansHandler(rw http.ResponseWriter, req *http.Request)
+    SessionSpansHandler returns the debug spans for the session.
+
+func (c *DebugAPIController) WithAuthorizer(authorizer authz.Authorizer)
+    WithAuthorizer sets the authorizer for the controller. Provided in order not
+    to change NewDebugAPIController.
+
+type DotGraph struct {
+	DotSrc string `json:"dotSrc"`
+}
+    DotGraph carries Graphviz DOT source. The UI renders it client-side.
+
+type ErrorResponse struct {
+	Error string `json:"error"`
+	// Detail explains what a caller can do about it.
+	Detail string `json:"detail,omitempty"`
+}
+    ErrorResponse is a machine-readable error body.
+
+type MetricsInfoResponse struct {
+	MetricsInfo []any `json:"metricsInfo"`
+}
+    MetricsInfoResponse is the body of the eval metrics-info endpoint.
+
+type RuntimeAPIController struct {
+	// Has unexported fields.
+}
+    RuntimeAPIController is the controller for the Runtime API.
+
+func NewRuntimeAPIController(sessionService session.Service, memoryService memory.Service, agentLoader agent.Loader, artifactService artifact.Service, sseTimeout time.Duration, pluginConfig runner.PluginConfig, autoCreateSession bool) *RuntimeAPIController
+    NewRuntimeAPIController creates the controller for the Runtime API.
+
+    Deprecated: use NewRuntimeAPIControllerWithConfig, which does not have to
+    grow a parameter every time the controller gains a setting. This one is kept
+    because it is released API and every existing call site still compiles;
+    it is a candidate for removal at the next major version.
+
+func NewRuntimeAPIControllerWithConfig(cfg RuntimeAPIControllerConfig) *RuntimeAPIController
+    NewRuntimeAPIControllerWithConfig creates the controller for the Runtime
+    API.
+
+    A separate constructor rather than a variadic parameter on the one above:
+    adding a parameter would change that function's type, which breaks any
+    caller holding it as a value even though ordinary call sites still compile,
+    and it is released API.
+
+func (c *RuntimeAPIController) RunHandler(rw http.ResponseWriter, req *http.Request) error
+    RunHandler executes a non-streaming agent run for a given session and
+    message.
+
+func (c *RuntimeAPIController) RunLiveHandler(rw http.ResponseWriter, req *http.Request) error
+    RunLiveHandler upgrades the request to a WebSocket and streams a live agent
+    session.
+
+func (c *RuntimeAPIController) RunSSEHandler(rw http.ResponseWriter, req *http.Request)
+    RunSSEHandler executes an agent run and streams the resulting events using
+    Server-Sent Events (SSE).
+
+func (c *RuntimeAPIController) WithAuthorizer(authorizer authz.Authorizer)
+    WithAuthorizer sets the authorizer. Provided to be compatible with
+    NewRuntimeAPIController Deprecated: use NewRuntimeAPIControllerWithConfig to
+    set authorizer directly in RuntimeAPIControllerConfig.
+
+type RuntimeAPIControllerConfig struct {
+	SessionService    session.Service
+	MemoryService     memory.Service
+	AgentLoader       agent.Loader
+	ArtifactService   artifact.Service
+	SSETimeout        time.Duration
+	PluginConfig      runner.PluginConfig
+	AutoCreateSession bool
+	Authorizer        authz.Authorizer
+
+	// Compaction enables context compaction for the runners this controller
+	// creates, replacing older session events with summaries.
+	//
+	// The sliding window reduces prompt size by a constant factor rather than
+	// bounding it. Only tail retention bounds growth, and it only fires when
+	// more events accumulate between sliding-window compactions than
+	// EventRetentionSize holds back, so a short interval with a large retention
+	// size leaves it idle. See [compaction.Config].
+	//
+	// optional
+	Compaction *compaction.Config
+}
+    RuntimeAPIControllerConfig carries everything
+    NewRuntimeAPIControllerWithConfig needs.
+
+    A config struct rather than functional options, which is what the rest of
+    this repository does and what this constructor should have taken from the
+    start. Options would have solved only the new field and left the seven
+    positional parameters in place, so every later addition would need a third
+    constructor; a struct absorbs both problems at once, and adding a field to
+    it breaks nobody.
+
+type SessionsAPIController struct {
+	// Has unexported fields.
+}
+    SessionsAPIController is the controller for the Sessions API.
+
+func NewSessionsAPIController(service session.Service) *SessionsAPIController
+    NewSessionsAPIController creates a new SessionsAPIController.
+
+func (c *SessionsAPIController) CreateSessionHandler(rw http.ResponseWriter, req *http.Request)
+    CreateSessionHandler is an HTTP handler for the create session API.
+
+func (c *SessionsAPIController) DeleteSessionHandler(rw http.ResponseWriter, req *http.Request)
+    DeleteSessionHandler handles deleting a specific session.
+
+func (c *SessionsAPIController) GetSessionHandler(rw http.ResponseWriter, req *http.Request)
+    GetSessionHandler retrieves a specific session by its ID.
+
+func (c *SessionsAPIController) ListSessionsHandler(rw http.ResponseWriter, req *http.Request)
+    ListSessionsHandler handles listing all sessions for a given app and user.
+
+func (c *SessionsAPIController) UpdateSessionHandler(rw http.ResponseWriter, req *http.Request)
+    UpdateSessionHandler applies a state delta to an existing session and
+    returns the updated session.
+
+    The ADK web UI PATCHes this route to rename a session — the new name is
+    written to state as __session_metadata__.displayName — and to edit session
+    state by hand. The delta is applied through session.Service by appending an
+    event carrying it in Actions.StateDelta, the same path an agent turn takes,
+    so every backend persists and scopes the change identically.
+
+func (c *SessionsAPIController) WithAuthorizer(authorizer authz.Authorizer)
+    WithAuthorizer sets the authorizer for the Controller. Provided in order not
+    to change NewSessionsAPIController.
+
+type VersionAPIController struct{}
+    VersionAPIController serves the version handshake the ADK web UI performs on
+    every page load.
+
+func NewVersionAPIController() *VersionAPIController
+    NewVersionAPIController creates a new VersionAPIController.
+
+func (c *VersionAPIController) VersionHandler(rw http.ResponseWriter, _ *http.Request)
+    VersionHandler reports the ADK version and implementation language.
+
+type VersionResponse struct {
+	// Version is the ADK release this server was built from.
+	Version string `json:"version"`
+	// Language identifies the ADK implementation. The field exists so a
+	// non-Python server can identify itself; ADK Go always reports "go".
+	Language string `json:"language"`
+	// LanguageVersion is the toolchain version, for example "go1.26.7".
+	LanguageVersion string `json:"language_version"`
+}
+    VersionResponse is the body of the version endpoint. The field names match
+    the ADK API contract shared with adk-python, so the same web UI can talk to
+    either server.
+

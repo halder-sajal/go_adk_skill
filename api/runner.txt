@@ -1,0 +1,84 @@
+package runner // import "google.golang.org/adk/v2/runner"
+
+Package runner provides a runtime for ADK agents.
+
+TYPES
+
+type Config struct {
+	AppName string
+	// Root agent which starts the execution.
+	Agent          agent.Agent
+	SessionService session.Service
+
+	// optional
+	ArtifactService artifact.Service
+	// optional
+	MemoryService memory.Service
+	// optional
+	PluginConfig PluginConfig
+	// optional
+	AutoCreateSession bool
+
+	// Compaction enables context compaction for the sessions this
+	// runner drives, replacing older events with summaries. Nil, the default,
+	// disables compaction.
+	//
+	// The sliding window reduces prompt size by a constant factor rather than
+	// bounding it. Only tail retention bounds growth, and it only fires when
+	// more events accumulate between sliding-window compactions than
+	// EventRetentionSize holds back, so a short interval with a large retention
+	// size leaves it idle. See [compaction.Config].
+	//
+	// When the config names no Summarizer, the runner installs a
+	// [compaction.LLMSummarizer] over the root agent's model, which then has to
+	// be an LLM agent.
+	//
+	// optional
+	Compaction *compaction.Config
+}
+    Config is used to create a Runner.
+
+type PluginConfig struct {
+	Plugins      []*plugin.Plugin
+	CloseTimeout time.Duration
+}
+    PluginConfig configures the plugins a Runner applies and how long it waits
+    for them to close.
+
+type RunOption func(*runOptions)
+    RunOption customizes a single run invocation.
+
+func WithStateDelta(delta map[string]any) RunOption
+    WithStateDelta sets a state delta for the run invocation.
+
+func WithYieldUserMessage() RunOption
+    WithYieldUserMessage makes Run yield the user message event (after it is
+    appended to the session) before any agent/node events. Mirrors adk-python's
+    yield_user_message. Currently honored by the node path.
+
+type Runner struct {
+	// Has unexported fields.
+}
+    Runner manages the execution of the agent within a session, handling message
+    processing, event generation, and interaction with various services like
+    artifact storage, session management, and memory.
+
+func New(cfg Config) (*Runner, error)
+    New creates a new Runner.
+
+func NewInMemory(appName string, a agent.Agent) (*Runner, error)
+    NewInMemory creates a Runner backed entirely by in-memory session, artifact,
+    and memory services, with session auto-creation enabled. It mirrors
+    adk-python's InMemoryRunner and is intended for local development and tests,
+    not production. Use New when you need to supply your own services or
+    plugins.
+
+func (r *Runner) Run(ctx context.Context, userID, sessionID string, msg *genai.Content, cfg agent.RunConfig, opts ...RunOption) iter.Seq2[*session.Event, error]
+    Run runs the agent for the given user input, yielding events from agents.
+    For each user message it finds the proper agent within an agent tree to
+    continue the conversation within the session.
+
+func (r *Runner) RunLive(ctx context.Context, userID, sessionID string, cfg agent.LiveRunConfig, opts ...RunOption) (agent.LiveSession, iter.Seq2[*session.Event, error], error)
+    RunLive starts a live, bidirectional agent session, returning the session
+    and a stream of events from the agents.
+

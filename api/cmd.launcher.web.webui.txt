@@ -1,0 +1,9 @@
+package webui // import "google.golang.org/adk/v2/cmd/launcher/web/webui"
+
+Package webui provides a sublauncher that adds ADK Web UI capabilities.
+
+FUNCTIONS
+
+func NewLauncher() weblauncher.Sublauncher
+    NewLauncher creates a new Sublauncher for the ADK Web UI.
+

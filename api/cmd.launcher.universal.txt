@@ -1,0 +1,16 @@
+package universal // import "google.golang.org/adk/v2/cmd/launcher/universal"
+
+Package universal provides an umbrella over launchers (console and web).
+It allowes to choose one launcher by command-line parameters and uses it to
+parse the rest of arguments and then execute the launcher
+
+FUNCTIONS
+
+func ErrorOnUnparsedArgs(args []string) error
+    ErrorOnUnparsedArgs returns an error if there are any unparsed arguments
+    left.
+
+func NewLauncher(sublaunchers ...launcher.SubLauncher) launcher.Launcher
+    NewLauncher returns a new universal launcher. The first element on launcher
+    list will be the default one if there are no arguments specified
+

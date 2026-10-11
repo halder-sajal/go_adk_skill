@@ -1,0 +1,123 @@
+package skill // import "google.golang.org/adk/v2/tool/skilltoolset/skill"
+
+Package skill provides structs and functions for working with agent skills.
+
+VARIABLES
+
+var (
+	ErrInvalidSkillName    = errors.New("invalid skill name")
+	ErrInvalidFrontmatter  = errors.New("invalid frontmatter")
+	ErrSkillNotFound       = errors.New("skill not found")
+	ErrDuplicateSkill      = errors.New("duplicate skill")
+	ErrInvalidResourcePath = errors.New("invalid resource path")
+	ErrResourceNotFound    = errors.New("resource not found")
+)
+    Common errors returned by Source implementations.
+
+
+FUNCTIONS
+
+func Build(fm *Frontmatter, markdown string) ([]byte, error)
+    Build creates the full SKILL.md file content from a Frontmatter struct and a
+    Markdown instruction body. It validates the Frontmatter before building.
+
+func Validate(fm *Frontmatter) error
+    Validate checks if the Frontmatter struct is valid according to the
+    specification. It enforces field lengths, formats, required fields, etc.
+
+    Note: "skill name must match the parent directory name" check is omitted
+    from this function as the Frontmatter struct lacks the file path context.
+
+
+TYPES
+
+type Frontmatter struct {
+	Name          string            `yaml:"name"`
+	Description   string            `yaml:"description"`
+	License       string            `yaml:"license,omitempty"`
+	Compatibility string            `yaml:"compatibility,omitempty"`
+	Metadata      map[string]string `yaml:"metadata,omitempty"`
+	AllowedTools  []string          `yaml:"allowed-tools,omitempty"`
+}
+    Frontmatter represents the YAML metadata at the top of a SKILL.md file.
+    For more details, see https://agentskills.io/specification#frontmatter.
+
+func Parse(r *bufio.Reader) (*Frontmatter, error)
+    Parse reads and validates YAML frontmatter from a SKILL.md reader.
+    On success, the reader will contain the remaining Markdown instruction.
+    Use when reading the entire file into memory is expensive.
+
+func ParseBytes(content []byte) (*Frontmatter, string, error)
+    ParseBytes splits and validates YAML frontmatter from SKILL.md content
+    bytes. It returns the Frontmatter and the Markdown instruction string.
+    Use when the entire file content is in memory.
+
+type Source interface {
+	// ListFrontmatters returns frontmatters for all available skills.
+	ListFrontmatters(ctx context.Context) ([]*Frontmatter, error)
+
+	// ListResources returns resource paths for a given skill and subpath.
+	// subpath is a relative path to the skill, as are the returned resource
+	// paths.
+	ListResources(ctx context.Context, name, subpath string) ([]string, error)
+
+	// LoadFrontmatter returns the frontmatter for a single skill by name.
+	LoadFrontmatter(ctx context.Context, name string) (*Frontmatter, error)
+
+	// LoadInstructions returns the instruction body for a single skill by name.
+	LoadInstructions(ctx context.Context, name string) (string, error)
+
+	// LoadResource returns a stream for a specific resource within a given skill.
+	// resourcePath is a relative path to the skill.
+	//
+	// NOTE: The caller is responsible for closing the returned io.ReadCloser.
+	LoadResource(ctx context.Context, name, resourcePath string) (io.ReadCloser, error)
+}
+    Source is the interface for accessing skill components.
+
+    Implementations must:
+      - be safe for concurrent use.
+      - return the sentinel error values defined in this package
+        (ErrInvalidSkillName, ErrInvalidFrontmatter, ErrSkillNotFound,
+        ErrDuplicateSkill, ErrInvalidResourcePath, ErrResourceNotFound, etc.)
+        when appropriate.
+
+func NewFileSystemSource(filesystem fs.FS) Source
+    NewFileSystemSource creates a Source implementation backed by an fs.FS.
+
+    The provided filesystem is expected to have skills organized as immediate
+    subdirectories. A valid skill directory MUST contain a "SKILL.md" file with
+    valid YAML frontmatter, and the directory name must exactly match the name
+    defined in that frontmatter.
+
+    Expected layout example:
+
+          skill-1/
+        	   SKILL.md
+        	   assets/
+          skill-2/
+        	   SKILL.md
+        	   references/
+        	   scripts/
+
+func NewMergedSource(sources ...Source) Source
+    NewMergedSource creates a Source that combines multiple underlying Source
+    implementations. The sources are queried in the order they are provided.
+
+func WithCompletePreloadSource(ctx context.Context, source Source) (Source, func(context.Context) error, error)
+    WithCompletePreloadSource returns a Source proxy that wraps the given
+    source and fully preloads all skill data (Frontmatters, Instructions, and
+    Resources) into memory upon creation. This offers the fastest access speed
+    after initialization, at the expense of higher initial load time and memory
+    usage. Additionally, 'reload' callback is returned: calling it actualizes
+    data by loading all the data anew.
+
+    NOTE: source.ListResources must list all resources for subpath ".".
+
+func WithFrontmatterPreloadSource(ctx context.Context, source Source) (Source, func(context.Context) error, error)
+    WithFrontmatterPreloadSource returns a Source proxy that wraps the
+    given source and eagerly preloads all skill Frontmatters into memory
+    upon creation. This optimizes future calls to ListFrontmatters and
+    LoadFrontmatter. Additionally, 'reload' callback is returned: calling it
+    actualizes data by loading frontmatters anew.
+

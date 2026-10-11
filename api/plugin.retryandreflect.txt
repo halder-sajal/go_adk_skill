@@ -1,0 +1,44 @@
+package retryandreflect // import "google.golang.org/adk/v2/plugin/retryandreflect"
+
+Package retryandreflect provides a plugin that provides self-healing,
+concurrent-safe error recovery for tool failures.
+
+This is the Go version of the Python plugin. See
+https://github.com/google/adk-py/blob/main/google/adk/plugins/retry_and_reflect_plugin.py
+
+FUNCTIONS
+
+func MustNew(opts ...PluginOption) *plugin.Plugin
+    MustNew creates a new reflect and retry tool plugin and panics if it fails.
+
+func New(opts ...PluginOption) (*plugin.Plugin, error)
+    New creates a new reflect and retry tool plugin.
+
+
+TYPES
+
+type PluginOption func(*retryAndReflect)
+    PluginOption is an option for configuring the ReflectAndRetryToolPlugin.
+
+func WithErrorIfRetryExceeded(errorIfRetryExceeded bool) PluginOption
+    WithErrorIfRetryExceeded sets whether to return an error if the retry limit
+    is exceeded. If set to true, then the original error is returned, otherwise
+    instead of the original error, the plugin will return a new instruction
+    "createToolRetryExceedMsg" telling LLM to stop using this tool for the
+    current task.
+
+func WithMaxRetries(maxRetries int) PluginOption
+    WithMaxRetries sets the maximum number of retries for a tool.
+
+func WithTrackingScope(scope TrackingScope) PluginOption
+    WithTrackingScope sets the tracking scope for tool failures.
+
+type TrackingScope string
+    TrackingScope defines the lifecycle scope for tracking tool failure counts.
+
+const (
+	// Invocation tracks failures per-invocation.
+	Invocation TrackingScope = "invocation"
+	// Global tracks failures globally across all turns and users.
+	Global TrackingScope = "global"
+)

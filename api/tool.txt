@@ -1,0 +1,76 @@
+package tool // import "google.golang.org/adk/v2/tool"
+
+Package tool defines the interfaces for tools that can be called by an agent.
+A tool is a piece of code that performs a specific task. You can either define
+your own custom tools or use built-in ones, for example, GoogleSearch.
+
+VARIABLES
+
+var ErrConfirmationRejected = errors.New("call is rejected")
+    ErrConfirmationRejected indicated that the tool call confirmation rejected.
+
+var ErrConfirmationRequired = errors.New("requires confirmation, please approve or reject")
+    ErrConfirmationRequired indicates that the tool requires confirmation.
+
+
+TYPES
+
+type ConfirmationProvider func(toolName string, toolInput any) bool
+    ConfirmationProvider defines a function that dynamically determines whether
+    a specific tool execution requires user confirmation.
+
+    It accepts the tool name and the input parameters as arguments. Returning
+    true signals that the system must wait for Human-in-the-Loop (HITL) approval
+    before proceeding with the execution.
+
+    EXPERIMENTAL: ConfirmationProvider is experimental and not currently in
+    scope for the v1.0 API.
+
+type Predicate func(ctx agent.ReadonlyContext, tool Tool) bool
+    Predicate is a function which decides whether a tool should be exposed to
+    LLM.
+
+func AllowedToolsPredicate(allowedTools []string) Predicate
+    AllowedToolsPredicate returns a Predicate that allows only the tools with
+    the given names.
+
+func StringPredicate(allowedTools []string) Predicate
+    StringPredicate is a helper that creates a Predicate from a string slice.
+    Deprecated: use AllowedToolsPredicate instead.
+
+type Tool interface {
+	// Name returns the name of the tool.
+	Name() string
+	// Description returns a description of the tool.
+	Description() string
+	// IsLongRunning indicates whether the tool is a long-running operation,
+	// which typically returns a resource id first and finishes the operation later.
+	IsLongRunning() bool
+}
+    Tool defines the interface for a callable tool.
+
+type Toolset interface {
+	// Name returns the name of the toolset.
+	Name() string
+	// Tools returns a list of tools in the toolset. The provided
+	// ReadonlyContext can be used to dynamically determine which tools
+	// to return based on the current invocation state.
+	Tools(ctx agent.ReadonlyContext) ([]Tool, error)
+}
+    Toolset is an interface for a collection of tools. It allows grouping
+    related tools together and providing them to an agent.
+
+func FilterToolset(toolset Toolset, predicate Predicate) Toolset
+    FilterToolset returns a Toolset that filters the tools in the given Toolset
+    using the given predicate.
+
+func WithConfirmation(ts Toolset, requireConfirmation bool, requireConfirmationProvider ConfirmationProvider) Toolset
+    WithConfirmation wraps a toolset to inject confirmation logic in each tool.
+    Only tools within the provided Toolset that implement the `runnableTool`
+    interface (i.e., provide a FunctionDeclaration and a Run method) will
+    be wrapped with confirmation logic. Other tools will be included in the
+    returned Toolset without modification.
+
+    EXPERIMENTAL: WithConfirmation is experimental and not currently in scope
+    for the v1.0 API.
+

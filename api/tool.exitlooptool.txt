@@ -1,0 +1,9 @@
+package exitlooptool // import "google.golang.org/adk/v2/tool/exitlooptool"
+
+Package exitlooptool provides a tool that allows an agent to exit a loop.
+
+FUNCTIONS
+
+func New() (tool.Tool, error)
+    New creates an instance of an exitLoop tool.
+

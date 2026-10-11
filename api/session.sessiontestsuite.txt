@@ -1,0 +1,33 @@
+package sessiontestsuite // import "google.golang.org/adk/v2/session/sessiontestsuite"
+
+Package sessiontestsuite provides a reusable, backend-agnostic test suite for
+verifying session.Service implementations.
+
+FUNCTIONS
+
+func RunServiceTests(t *testing.T, opts SuiteOptions, setup func(t *testing.T) session.Service)
+    RunServiceTests runs a battery of standard tests against a Session.Service.
+
+
+TYPES
+
+type ExpectedSession struct {
+	AppName   string
+	UserID    string
+	SessionID string
+	State     map[string]any
+	Events    []*session.Event
+}
+    ExpectedSession represents a snapshot of a session's public state for test
+    comparisons.
+
+func Snapshot(s session.Session) ExpectedSession
+    Snapshot extracts values from ANY session.Session implementation.
+
+type SuiteOptions struct {
+	SupportsUserProvidedSessionID bool
+	ProvidesServerAssignedEventID bool
+	AppName                       string
+}
+    SuiteOptions holds configuration for adaptive test runs.
+

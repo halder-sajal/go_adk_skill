@@ -1,0 +1,37 @@
+package authz // import "google.golang.org/adk/v2/server/authz"
+
+Package authz provides authorization for the ADK REST API.
+
+VARIABLES
+
+var ErrUnauthorized = errors.New("authz: unauthorized")
+    ErrUnauthorized should be returned by Authorizer CanActAsUser to indicate a
+    failure in authorization.
+
+
+FUNCTIONS
+
+func WriteHTTPStatusForAuthError(rw http.ResponseWriter, err error)
+    WriteHTTPStatusForAuthError writes a 403 Forbidden response, appending the
+    error message when one is provided. Forbidden, not Unauthorized (401):
+    the caller is authenticated but not permitted to act as the requested user.
+
+
+TYPES
+
+type Authorizer interface {
+	// CanActAsUser returns nil iff the [Caller]] from the ctx can act as a userID. Otherwise returns an error
+	// WARNING: avoid returning PII data in the error, it will be send back to the client.
+	CanActAsUser(ctx context.Context, userID string) error
+}
+    Authorizer provides information whether the [Caller] can act as a userID It
+    is used in ADK REST API (adkrest), which has the userID in paths.
+
+func NewNoop() Authorizer
+    NewNoop creates a new Noop Authorizer - allows any authn.Caller to act as
+    any userID.
+
+func NewStrict() Authorizer
+    NewStrict returns an Authorizer which ensures exact match between the
+    authenticated user and the user from the payload
+

@@ -1,0 +1,14 @@
+package preloadmemorytool // import "google.golang.org/adk/v2/tool/preloadmemorytool"
+
+Package preloadmemorytool provides a tool that automatically preloads memory for
+the current user at the start of each LLM request.
+
+Unlike loadmemorytool which is called explicitly by the model, this tool runs
+automatically for each LLM request and injects relevant memory context into the
+system instructions.
+
+FUNCTIONS
+
+func New() *preloadMemoryTool
+    New creates a new preloadMemoryTool.
+

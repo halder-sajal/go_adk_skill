@@ -1,0 +1,22 @@
+package agenttool // import "google.golang.org/adk/v2/tool/agenttool"
+
+Package agenttool provides a tool that allows an agent to call another agent.
+This enables composition of agents, which can be useful for scenarios where
+different types of `genai` tools cannot be used together.
+
+FUNCTIONS
+
+func New(agent agent.Agent, cfg *Config) tool.Tool
+    New creates a new agent tool. If cfg is nil, skipSummarization defaults to
+    false.
+
+
+TYPES
+
+type Config struct {
+	// SkipSummarization, if true, will cause the agent to skip summarization
+	// after the sub-agent finishes execution.
+	SkipSummarization bool
+}
+    Config holds the configuration for an agent tool.
+

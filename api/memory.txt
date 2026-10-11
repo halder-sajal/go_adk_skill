@@ -1,0 +1,54 @@
+package memory // import "google.golang.org/adk/v2/memory"
+
+Package memory defines the entities to interact with agent memory (long-term
+knowledge).
+
+TYPES
+
+type Entry struct {
+	// ID is the unique identifier of the memory.
+	ID string
+	// Content contains the main content of the memory.
+	Content *genai.Content
+	// Author of the memory.
+	Author string
+	// Timestamp shows when the original content of this memory happened.
+	// This string will be forwarded to LLM. Preferred format is ISO 8601 format.
+	Timestamp time.Time
+	// CustomMetadata contains optional custom metadata associated with the memory.
+	CustomMetadata map[string]any
+}
+    Entry represents a single memory entry.
+
+type SearchRequest struct {
+	Query   string
+	UserID  string
+	AppName string
+}
+    SearchRequest represents a request for memory search.
+
+type SearchResponse struct {
+	Memories []Entry
+}
+    SearchResponse represents the response from a memory search.
+
+type Service interface {
+	// AddSession adds a session to the memory service.
+	//
+	// A session can be added multiple times during its lifetime.
+	AddSessionToMemory(ctx context.Context, s session.Session) error
+	// SearchMemory returns memory entries relevant to the given query.
+	// Empty slice is returned if there are no matches.
+	SearchMemory(ctx context.Context, req *SearchRequest) (*SearchResponse, error)
+}
+    Service is a definition of the memory service.
+
+    The service ingests sessions into memory so that it can be used for user
+    queries across user-scoped sessions.
+
+func InMemoryService() Service
+    InMemoryService returns a new in-memory implementation of the memory
+    service. Thread-safe. Searches return at most ten entries, ranked by the
+    number of distinct query words they match. Ties follow session insertion
+    order, then event order.
+

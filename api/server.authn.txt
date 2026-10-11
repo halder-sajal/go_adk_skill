@@ -1,0 +1,99 @@
+package authn // import "google.golang.org/adk/v2/server/authn"
+
+Package authn provides inbound HTTP authentication for the ADK REST API.
+
+It defines a small Authenticator seam that different providers implement and a
+Middleware that gates authenticated endpoints and answers 401 when a request
+carries no valid credentials
+
+A server wires an Authenticator through adkrest.ServerConfig. Endpoints are
+authenticated by default and only those explicitly marked public (for example
+/health and /version) are reachable without credentials.
+
+CONSTANTS
+
+const (
+	// UserEMailHeader is header name which contains user email (see https://docs.cloud.google.com/iap/docs/identity-howto).
+	// Example value: accounts.google.com:example@gmail.com
+	UserEMailHeader = "X-Goog-Authenticated-User-Email"
+
+	// UserIDHeader is header name which contains user id (see https://docs.cloud.google.com/iap/docs/identity-howto).
+	// Example value: accounts.google.com:userIDvalue
+	UserIDHeader = "X-Goog-Authenticated-User-Id"
+)
+
+VARIABLES
+
+var ErrUnauthenticated = errors.New("authn: unauthenticated")
+    ErrUnauthenticated reports that a request carried no valid credentials.
+    An Authenticator returns it, or an error wrapping it, to make Middleware
+    answer 401 Unauthorized. Any other error is treated as an internal provider
+    failure and answered 500.
+
+
+FUNCTIONS
+
+func Middleware(a Authenticator) func(http.Handler) http.Handler
+    Middleware returns HTTP middleware that authenticates every request before
+    passing it to the next handler, and answers 401 (or 500 on an internal
+    provider failure) when authentication fails. On success it stores the
+    resolved identity on the request context, where downstream handlers read it
+    with CallerFromContext.
+
+    A nil a yields pass-through middleware, so a caller can wire Middleware
+    unconditionally.
+
+func WithCaller(ctx context.Context, id *Caller) context.Context
+    WithCaller returns a copy of ctx carrying id. A nil id is ignored and ctx is
+    returned unchanged.
+
+
+TYPES
+
+type Authenticator interface {
+	// Authenticate verifies the request's credentials and returns the
+	// authenticated identity. It returns an error wrapping [ErrUnauthenticated]
+	// when the request has no valid credentials for this provider.
+	Authenticate(r *http.Request) (*Caller, error)
+}
+    Authenticator authenticates an inbound HTTP request. Implementations back
+    different providers/schemes. Use NewCustom to adapt a plain function.
+
+func NewCustom(authFunc AuthenticatorFunc) Authenticator
+    NewCustom returns a custom Authenticator, using the provided function as a
+    part of middleware
+
+func NewHeader(name string) Authenticator
+    NewHeader returns an Authenticator that reads the UserID from the named
+    request header. It rejects a request whose header is absent or carries more
+    than one value.
+
+func NewIdentityAwareProxy() Authenticator
+    NewIdentityAwareProxy returns an Authenticator to be
+    used behind an Identity Aware-Proxy for Google Cloud
+    (https://cloud.google.com/security/products/iap) - for instance for Cloud
+    Run-based deployment. The proxy puts into the headers values for email and
+    user-id (UserEMailHeader and UserIDHeader accordingly) IMPORTANT: Do not
+    rely on those headers if IAP can be bypassed!
+
+func NewNoop() Authenticator
+    NewNoop returns a noop Authenticator (always returns an empty Caller)
+
+type AuthenticatorFunc func(r *http.Request) (*Caller, error)
+    AuthenticatorFunc is the function which can be used by NewCustom to create a
+    custom Authenticator
+
+type Caller struct {
+	// UserID is the stable identifier of the caller. Middleware puts it on the
+	// request context, where it can be read with [CallerFromContext].
+	UserID string
+	// Claims carries optional provider-specific attributes (email, roles, token
+	// scopes, ...). It may be nil.
+	Claims map[string]any
+}
+    Caller is the authenticated principal resolved from a request.
+
+func CallerFromContext(ctx context.Context) (*Caller, bool)
+    CallerFromContext returns the Caller carried by ctx, reporting false when
+    the request was not authenticated.
+

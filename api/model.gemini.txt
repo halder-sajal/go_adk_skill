@@ -1,0 +1,15 @@
+package gemini // import "google.golang.org/adk/v2/model/gemini"
+
+Package gemini implements the model.LLM interface for Gemini models.
+
+FUNCTIONS
+
+func NewModel(ctx context.Context, modelName string, cfg *genai.ClientConfig) (model.LLM, error)
+    NewModel returns model.LLM, backed by the Gemini API.
+
+    It uses the provided context and configuration to initialize the underlying
+    genai.Client. The modelName specifies which Gemini model to target (e.g.,
+    "gemini-2.5-flash").
+
+    An error is returned if the genai.Client fails to initialize.
+

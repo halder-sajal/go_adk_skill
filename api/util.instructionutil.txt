@@ -1,0 +1,23 @@
+package instructionutil // import "google.golang.org/adk/v2/util/instructionutil"
+
+Package instructionutil provides utilities to work with agent instructions.
+
+FUNCTIONS
+
+func InjectSessionState(ctx agent.ReadonlyContext, template string) (string, error)
+    InjectSessionState populates values in the instruction template, e.g. state,
+    artifact, etc.
+      - There can be placeholders like {key_name} that will be resolved by ADK
+        at runtime using session state and context.
+      - key_name must match "^[a-zA-Z_][a-zA-Z0-9_]*$", otherwise it will be
+        treated as a literal.
+      - {artifact.key_name} can be used to insert the text content of the
+        artifact named key_name.
+
+    If the state variable or artifact does not exist, the agent will raise an
+    error. If you want to ignore the error, you can append a ? to the variable
+    name as in {var?}.
+
+    This method is intended to be used in InstructionProvider based Instruction
+    and GlobalInstruction which are called with ReadonlyContext.
+

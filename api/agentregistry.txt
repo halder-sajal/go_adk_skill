@@ -1,0 +1,253 @@
+package agentregistry // import "google.golang.org/adk/v2/agentregistry"
+
+Package agentregistry provides a client for the Google Cloud Agent Registry
+(agentregistry.googleapis.com), a governed catalog of A2A agents, MCP servers,
+and model endpoints.
+
+This package provides the client foundation: configuration (Config),
+an authenticated REST transport to the third-party (public) endpoint using
+Application Default Credentials with mTLS endpoint selection, typed errors
+(APIError), and the wire types returned by the service. Discovery methods and
+the RemoteAgent/MCPToolset factory helpers build on this foundation.
+
+TYPES
+
+type APIError struct {
+	// StatusCode is the HTTP status code of the response.
+	StatusCode int
+	// Body is the raw response body, useful for diagnosing the failure.
+	Body string
+}
+    APIError is returned when the registry API responds with a non-2xx status.
+
+func (e *APIError) Error() string
+
+type Agent struct {
+	Name        string     `json:"name,omitempty"`
+	DisplayName string     `json:"displayName,omitempty"`
+	Description string     `json:"description,omitempty"`
+	Version     string     `json:"version,omitempty"`
+	Protocols   []Protocol `json:"protocols,omitempty"`
+	Skills      []Skill    `json:"skills,omitempty"`
+	Card        *Card      `json:"card,omitempty"`
+}
+    Agent is a registered A2A agent.
+
+type Annotations struct {
+	Title           string `json:"title,omitempty"`
+	DestructiveHint bool   `json:"destructiveHint,omitempty"`
+	IdempotentHint  bool   `json:"idempotentHint,omitempty"`
+	OpenWorldHint   bool   `json:"openWorldHint,omitempty"`
+	ReadOnlyHint    bool   `json:"readOnlyHint,omitempty"`
+}
+    Annotations are behavioral hints for a Tool. Absent hints carry API-side
+    defaults (DestructiveHint and OpenWorldHint default to true), so a
+    zero-value false here can mean "unset" rather than an explicit false.
+
+type Card struct {
+	Type    string          `json:"type,omitempty"`
+	Content json.RawMessage `json:"content,omitempty"`
+}
+    Card carries an embedded agent card returned by the registry. Content holds
+    the raw card JSON (e.g. an A2A AgentCard) when Type is "A2A_AGENT_CARD".
+
+type Client struct {
+	// Has unexported fields.
+}
+    Client is a client for the Google Cloud Agent Registry.
+
+func New(ctx context.Context, cfg Config) (*Client, error)
+    New creates a Client. By default it authenticates to
+    agentregistry.googleapis.com using Application Default Credentials; provide
+    Config.HTTPClient to supply a custom (e.g. pre-authenticated) client.
+
+func (c *Client) AllAgents(ctx context.Context, opts ...ListOption) iter.Seq2[*Agent, error]
+    AllAgents iterates over every agent matching opts, fetching pages on demand.
+    If a page fetch fails the iterator yields a single (nil, error) and stops.
+
+func (c *Client) AllEndpoints(ctx context.Context, opts ...ListOption) iter.Seq2[*Endpoint, error]
+    AllEndpoints iterates over every endpoint matching opts, fetching pages on
+    demand. If a page fetch fails the iterator yields a single (nil, error) and
+    stops.
+
+func (c *Client) AllMCPServers(ctx context.Context, opts ...ListOption) iter.Seq2[*MCPServer, error]
+    AllMCPServers iterates over every MCP server matching opts, fetching pages
+    on demand. If a page fetch fails the iterator yields a single (nil, error)
+    and stops.
+
+func (c *Client) GetAgent(ctx context.Context, name string) (*Agent, error)
+    GetAgent returns the metadata of a single agent. name is the full resource
+    name (e.g. "projects/<p>/locations/<l>/agents/<id>").
+
+func (c *Client) GetEndpoint(ctx context.Context, name string) (*Endpoint, error)
+    GetEndpoint returns the metadata of a single endpoint. name is the full
+    resource name (e.g. "projects/<p>/locations/<l>/endpoints/<id>").
+
+func (c *Client) GetMCPServer(ctx context.Context, name string) (*MCPServer, error)
+    GetMCPServer returns the metadata of a single MCP server. name is the full
+    resource name (e.g. "projects/<p>/locations/<l>/mcpServers/<id>").
+
+func (c *Client) ListAgents(ctx context.Context, opts ...ListOption) (*ListAgentsResponse, error)
+    ListAgents returns one page of registered A2A agents. For automatic paging
+    use Client.AllAgents.
+
+func (c *Client) ListEndpoints(ctx context.Context, opts ...ListOption) (*ListEndpointsResponse, error)
+    ListEndpoints returns one page of registered model endpoints. For automatic
+    paging use Client.AllEndpoints.
+
+func (c *Client) ListMCPServers(ctx context.Context, opts ...ListOption) (*ListMCPServersResponse, error)
+    ListMCPServers returns one page of registered MCP servers. For automatic
+    paging use Client.AllMCPServers.
+
+func (c *Client) MCPToolset(ctx context.Context, name string, opts ...MCPToolsetOption) (tool.Toolset, error)
+    MCPToolset resolves a registered MCP server into a tool.Toolset backed by a
+    streamable-HTTP MCP connection. name is the full MCP server resource name.
+
+    The endpoint is resolved preferring the JSONRPC binding, then HTTP_JSON.
+    By default, requests to *.googleapis.com endpoints are authenticated with
+    the registry's Application Default Credentials; use WithMCPHTTPClient and/or
+    WithMCPHeaders to override or augment egress.
+
+func (c *Client) RemoteAgent(ctx context.Context, name string, opts ...RemoteAgentOption) (agent.Agent, error)
+    RemoteAgent resolves a registered A2A agent into an agent.Agent usable as a
+    sub-agent. name is the full agent resource name.
+
+    The agent card is taken from the registry's embedded card when present,
+    and otherwise synthesized from the agent's discrete fields. Egress auth
+    is left to the caller: pass WithA2AHTTPClient (and/or WithA2AHeaders) to
+    authenticate requests to the remote agent.
+
+type Config struct {
+	// ProjectID is the Google Cloud project ID. Required.
+	ProjectID string
+	// Location is the Google Cloud location (region), e.g. "us-central1".
+	// Required.
+	Location string
+	// HTTPClient is used for registry API calls. If nil, an ADC-authenticated
+	// client is created and the endpoint (incl. mTLS) is resolved from
+	// GOOGLE_API_USE_MTLS_ENDPOINT / GOOGLE_API_USE_CLIENT_CERTIFICATE. A
+	// supplied client manages its own mTLS.
+	HTTPClient *http.Client
+}
+    Config configures a Client.
+
+type Endpoint struct {
+	Name        string         `json:"name,omitempty"`
+	EndpointID  string         `json:"endpointId,omitempty"`
+	DisplayName string         `json:"displayName,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Interfaces  []Interface    `json:"interfaces,omitempty"`
+	CreateTime  string         `json:"createTime,omitempty"`
+	UpdateTime  string         `json:"updateTime,omitempty"`
+	Attributes  map[string]any `json:"attributes,omitempty"`
+}
+    Endpoint is a registered model endpoint.
+
+type Interface struct {
+	URL             string `json:"url,omitempty"`
+	ProtocolBinding string `json:"protocolBinding,omitempty"`
+}
+    Interface describes a single connection interface (endpoint URL + binding)
+    for a protocol.
+
+type ListAgentsResponse struct {
+	Agents        []Agent `json:"agents,omitempty"`
+	NextPageToken string  `json:"nextPageToken,omitempty"`
+}
+    ListAgentsResponse is one page of a Client.ListAgents response.
+
+type ListEndpointsResponse struct {
+	Endpoints     []Endpoint `json:"endpoints,omitempty"`
+	NextPageToken string     `json:"nextPageToken,omitempty"`
+}
+    ListEndpointsResponse is one page of a Client.ListEndpoints response.
+
+type ListMCPServersResponse struct {
+	MCPServers    []MCPServer `json:"mcpServers,omitempty"`
+	NextPageToken string      `json:"nextPageToken,omitempty"`
+}
+    ListMCPServersResponse is one page of a Client.ListMCPServers response.
+
+type ListOption func(url.Values)
+    ListOption customizes a list request (filter and pagination).
+
+func WithFilter(filter string) ListOption
+    WithFilter sets the list filter expression.
+
+func WithPageSize(size int) ListOption
+    WithPageSize sets the maximum number of results per page.
+
+func WithPageToken(token string) ListOption
+    WithPageToken sets the page token used to continue a previous list call.
+
+type MCPServer struct {
+	Name        string         `json:"name,omitempty"`
+	MCPServerID string         `json:"mcpServerId,omitempty"`
+	DisplayName string         `json:"displayName,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Protocols   []Protocol     `json:"protocols,omitempty"`
+	Interfaces  []Interface    `json:"interfaces,omitempty"`
+	Tools       []Tool         `json:"tools,omitempty"`
+	CreateTime  string         `json:"createTime,omitempty"`
+	UpdateTime  string         `json:"updateTime,omitempty"`
+	Attributes  map[string]any `json:"attributes,omitempty"`
+}
+    MCPServer is a registered MCP server.
+
+type MCPToolsetOption func(*egressConfig)
+    MCPToolsetOption customizes Client.MCPToolset.
+
+func WithMCPHTTPClient(c *http.Client) MCPToolsetOption
+    WithMCPHTTPClient sets the HTTP client used to reach the MCP server.
+    It overrides the default (an Application Default Credentials client
+    for *.googleapis.com endpoints, else http.DefaultClient). The default
+    has no timeout; bound egress on the client's Transport rather than via
+    http.Client.Timeout, which is a deadline over the whole request and would
+    truncate streaming responses.
+
+func WithMCPHeaders(h map[string]string) MCPToolsetOption
+    WithMCPHeaders adds or overwrites static headers on every request sent
+    to the MCP server. Repeated calls accumulate; a later value wins on a key
+    conflict.
+
+type Protocol struct {
+	Type            string      `json:"type,omitempty"`
+	ProtocolVersion string      `json:"protocolVersion,omitempty"`
+	Interfaces      []Interface `json:"interfaces,omitempty"`
+}
+    Protocol describes a protocol a resource speaks together with its
+    interfaces.
+
+type RemoteAgentOption func(*egressConfig)
+    RemoteAgentOption customizes Client.RemoteAgent.
+
+func WithA2AHTTPClient(c *http.Client) RemoteAgentOption
+    WithA2AHTTPClient sets the HTTP client used to reach the remote A2A agent.
+    A2A egress is not auto-authenticated, so set this to authenticate requests
+    to the remote agent. The default (http.DefaultClient) has no timeout; bound
+    egress on the client's Transport rather than via http.Client.Timeout, which
+    is a deadline over the whole request and would truncate streaming responses.
+
+func WithA2AHeaders(h map[string]string) RemoteAgentOption
+    WithA2AHeaders adds or overwrites static headers on every request sent to
+    the remote A2A agent. Repeated calls accumulate; a later value wins on a key
+    conflict.
+
+type Skill struct {
+	ID          string   `json:"id,omitempty"`
+	Name        string   `json:"name,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	Examples    []string `json:"examples,omitempty"`
+}
+    Skill describes an A2A agent skill.
+
+type Tool struct {
+	Name        string       `json:"name,omitempty"`
+	Description string       `json:"description,omitempty"`
+	Annotations *Annotations `json:"annotations,omitempty"`
+}
+    Tool describes a tool the registry reports for an MCP server. This is the
+    registry's declared metadata; the live tool set is discovered over MCP when
+    a toolset actually connects (see Client.MCPToolset).
+

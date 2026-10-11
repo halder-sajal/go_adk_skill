@@ -1,0 +1,130 @@
+package openaimodel // import "google.golang.org/adk/v2/model/openaimodel"
+
+Package openaimodel provides a client for interacting with OpenAI's API.
+
+EXPERIMENTAL: This package is experimental and its behavior may change or be
+removed in the future.
+
+It implements the model.LLM interface, making it compatible with providers
+that expose the OpenAI Responses API surface. This package allows for easy
+integration of OpenAI's language models into applications.
+
+Every top-level field of genai.GenerateContentConfig is either translated to
+the Responses API or rejected with an error naming it, the pre-existing errors
+being checked first so existing errors.Is call sites are unaffected. Rejection
+keys on presence, which is only observable where the zero value cannot itself
+be a setting, so a plain bool or string carrying its zero — AudioTimestamp
+false, CachedContent or MediaResolution empty — passes unremarked, as does
+HTTPOptions.Headers, ignored by design because headers addressed to another
+backend must not reach OpenAI.
+
+    Translated  Temperature, TopP, MaxOutputTokens, SystemInstruction,
+                ResponseMIMEType, ResponseSchema, ResponseJsonSchema,
+                ResponseLogprobs with Logprobs, Tools, ToolConfig,
+                ThinkingConfig, ServiceTier, HTTPOptions.Timeout
+    Rejected    TopK, StopSequences, CandidateCount above one, the penalties,
+                Labels, SafetySettings, an unsupported ResponseMIMEType, Seed,
+                CachedContent, ResponseModalities, MediaResolution,
+                SpeechConfig, AudioTimestamp, ImageConfig, RoutingConfig,
+                ModelSelectionConfig, ModelArmorConfig,
+                EnableEnhancedCivicAnswers, AudioTranscriptionConfig,
+                HTTPOptions apart from Timeout and Headers
+    Ignored     HTTPOptions.Headers
+
+Clients construct a ClientConfig and pass it to NewModel:
+
+    ctx := context.Background()
+    cfg := &openaimodel.ClientConfig{APIKey: os.Getenv("OPENAI_API_KEY")}
+    llm, err := openaimodel.NewModel(ctx, openai.ChatModelGPT4oMini, cfg)
+    if err != nil {
+    	log.Fatal(err)
+    }
+
+CONSTANTS
+
+const FinishMessageKey = "openai_finish_message"
+    FinishMessageKey is the model.LLMResponse.CustomMetadata key under which a
+    turn that ended badly but still carries an answer reports the provider's own
+    account of why — a content filter's "content_filter", an incomplete reason
+    this package does not map, or a server error message. Its FinishReason says
+    the turn was cut short; this says what the provider called it.
+
+    A turn left with nothing to read reports the same wording in ErrorCode and
+    ErrorMessage instead, which callers treat as a failed turn.
+
+    It reaches in-process callers, session storage and A2A metadata, but not
+    REST: server/adkrest maps events field by field and omits CustomMetadata,
+    so an ADK Web consumer sees the FinishReason alone.
+
+
+VARIABLES
+
+var (
+	// ErrModelNameRequired is returned when a model name is not provided.
+	ErrModelNameRequired = errors.New("openai: model name is required")
+	// ErrRequestNil is returned when the provided request is nil.
+	ErrRequestNil = errors.New("openai: request is nil")
+	// ErrNoContents is returned when the LLM request has no contents.
+	ErrNoContents = errors.New("openai: LLM request has no contents to convert")
+	// ErrFunctionCallMissingName is returned when a function call is missing a name.
+	ErrFunctionCallMissingName = errors.New("openai: function call missing name")
+	// ErrTopKNotSupported is returned when TopK is used, which is not supported.
+	ErrTopKNotSupported = errors.New("openai: topK is not supported by the Responses API")
+	// ErrStopSequencesNotSupported is returned when stop sequences are used, which is not supported.
+	ErrStopSequencesNotSupported = errors.New("openai: stop sequences are not supported")
+	// ErrMultipleCandidatesNotSupported is returned when multiple candidates are requested, which is not supported.
+	ErrMultipleCandidatesNotSupported = errors.New("openai: multiple candidates per request are not supported")
+	// ErrPenaltiesNotSupported is returned when frequency/presence penalties are used, which is not supported.
+	ErrPenaltiesNotSupported = errors.New("openai: frequency/presence penalties are not supported")
+	// ErrLabelsNotSupported is returned when request labels are used, which is not supported.
+	ErrLabelsNotSupported = errors.New("openai: request labels are not supported")
+	// ErrSafetySettingsNotSupported is returned when Gemini safety settings are used, which is not supported.
+	ErrSafetySettingsNotSupported = errors.New("openai: gemini safety settings are not supported")
+	// ErrUnsupportedMIMEType is returned when an unsupported MIME type is used.
+	ErrUnsupportedMIMEType = errors.New("openai: unsupported mime type")
+	// ErrUnsupportedConfigField is returned when a generation config field has no Responses API equivalent; the message names it.
+	ErrUnsupportedConfigField = errors.New("openai: unsupported generation config field")
+
+	// ErrEmptyJSONSchema is returned when an empty JSON schema is provided.
+	ErrEmptyJSONSchema = errors.New("openai: empty json schema")
+	// ErrEmptyResponse is returned when the OpenAI API returns an empty response.
+	ErrEmptyResponse = errors.New("openai: empty response")
+	// ErrNoOutputItems is returned when the response contains no output items.
+	ErrNoOutputItems = errors.New("openai: response included no output items")
+	// ErrResponseFailed is returned when the server reports the response itself
+	// as failed, whatever output it came with. Such a failure arrives as HTTP
+	// 200, and both a blocking call and a stream report it in place of the
+	// output that would otherwise have read as a turn.
+	ErrResponseFailed = errors.New("openai: response failed")
+	// ErrUnsupportedMessageContentType is returned when an unsupported message content type is used.
+	ErrUnsupportedMessageContentType = errors.New("openai: unsupported message content type")
+	// ErrUnsupportedOutputItemType is returned when an unsupported output item type is used.
+	ErrUnsupportedOutputItemType = errors.New("openai: unsupported output item type")
+	// ErrFunctionCallArgs is returned when a function call's arguments are not a decodable JSON object.
+	ErrFunctionCallArgs = errors.New("openai: parse function call args")
+	// ErrNoTextOrToolContent is returned when the response output does not contain text or tool content.
+	ErrNoTextOrToolContent = errors.New("openai: response output did not contain text or tool content")
+)
+
+FUNCTIONS
+
+func NewModel(_ context.Context, modelName string, cfg *ClientConfig) (model.LLM, error)
+    NewModel constructs a new openAIModel. The context is unused but kept for
+    signature parity with other model constructors (e.g., gemini.NewModel).
+
+
+TYPES
+
+type ClientConfig struct {
+	APIKey     string
+	BaseURL    string       // for OpenAI-compatible endpoints
+	HTTPClient *http.Client // optional; e.g. for tests
+
+	// Options is an escape hatch for advanced openai-go request options,
+	// appended after the options derived from the fields above.
+	Options []option.RequestOption
+}
+    ClientConfig configures the OpenAI client. Mirrors model/gemini, which takes
+    *genai.ClientConfig. Empty APIKey/BaseURL fall back to the OPENAI_API_KEY /
+    OPENAI_BASE_URL env vars (handled by openai-go's default options).
+

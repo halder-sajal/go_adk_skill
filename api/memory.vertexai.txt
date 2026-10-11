@@ -1,0 +1,26 @@
+package vertexai // import "google.golang.org/adk/v2/memory/vertexai"
+
+Package vertexai provides support for using MemoryBank provided by VertexAI
+
+FUNCTIONS
+
+func NewService(ctx context.Context, config *ServiceConfig) (memory.Service, error)
+    NewService creates a new instance of Memory Service supported by VertexAI
+    MemoryBank.
+
+
+TYPES
+
+type ServiceConfig struct {
+	vertexaiutil.AgentEngineData
+	// StateKeySessionLastUpdateTime controlls the process of the generation of memories.
+	// If set to "", the whole session is used to generate the memories.
+	// If provided, the value is treated as a key for Session State. Retrieved value (time.Time is expected) is used to filter the events to the most recent ones.
+	// Warning! The value for State under this key should be set as soon as possible (for instance, during the BeforeRunCallback)
+	StateKeySessionLastUpdateTime string
+	WaitForCompletion             bool
+}
+    ServiceConfig allows you to specify the instance of MemoryBank (by
+    specifying an AgentEngine instance). Specifies also a way to convert session
+    events to memories (see StateKeySessionLastUpdateTime)
+

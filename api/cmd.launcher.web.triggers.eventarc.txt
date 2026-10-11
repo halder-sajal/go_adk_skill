@@ -1,0 +1,10 @@
+package eventarc // import "google.golang.org/adk/v2/cmd/launcher/web/triggers/eventarc"
+
+Package eventarc provides a sublauncher that adds Eventarc trigger capabilities
+to ADK web server.
+
+FUNCTIONS
+
+func NewLauncher() web.Sublauncher
+    NewLauncher creates a new eventarc launcher. It extends Web launcher.
+

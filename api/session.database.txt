@@ -1,0 +1,34 @@
+package database // import "google.golang.org/adk/v2/session/database"
+
+Package database provides a session.Service backed by a relational database (for
+example PostgreSQL, Spanner, or SQLite) using GORM.
+
+FUNCTIONS
+
+func AutoMigrate(service session.Service) error
+    AutoMigrate runs the GORM auto-migration tool to ensure the database schema
+    matches the internal storage models (e.g., storageSession, storageEvent).
+
+    NOTE: This function relies on a type assertion to the concrete
+    *databaseService implementation. It will return an error if the provided
+    session.Service is a different implementation.
+
+func NewSessionService(dialector gorm.Dialector, opts ...gorm.Option) (session.Service, error)
+    NewSessionService creates a new session.Service implementation that uses
+    a relational database (e.g., PostgreSQL, Spanner, SQLite) via the GORM
+    library.
+
+    It requires a gorm.Dialector to specify the database connection and accepts
+    optional gorm.Option values for further GORM configuration.
+
+    It returns the new session.Service or an error if the database connection
+    gorm.Open fails.
+
+func NewSessionServiceFromDB(db *gorm.DB) (session.Service, error)
+    NewSessionServiceFromDB creates a new session.Service implementation using
+    an existing *gorm.DB connection. This is useful when the application
+    already manages a database connection and wants to share it across multiple
+    services.
+
+    It returns an error if db is nil.
+

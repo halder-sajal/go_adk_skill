@@ -1,0 +1,27 @@
+package exampletool // import "google.golang.org/adk/v2/tool/exampletool"
+
+Package exampletool provides a tool that allows an agent to add (few-shot)
+examples to the LLM request.
+
+FUNCTIONS
+
+func New(config ExampleToolConfig) (*exampleTool, error)
+    New creates an example tool that adds the configured few-shot examples to
+    the LLM request.
+
+
+TYPES
+
+type Example struct {
+	Input  *genai.Content   `json:"input"`
+	Output []*genai.Content `json:"output"`
+}
+    Example is a single few-shot example, pairing an input with its expected
+    output.
+
+type ExampleToolConfig struct {
+	Examples []*Example
+}
+    ExampleToolConfig configures an example tool with the few-shot examples to
+    add.
+

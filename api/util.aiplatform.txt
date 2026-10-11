@@ -1,0 +1,14 @@
+package aiplatform // import "google.golang.org/adk/v2/util/aiplatform"
+
+Package aiplatform provides utils for aiplatform.googleapis.com
+
+FUNCTIONS
+
+func HostPortURL(region string) string
+    HostPortURL returns aiplatform host URL for a given region with port number.
+    Example: "us-central1-aiplatform.googleapis.com:443"
+
+func HostURL(region string) string
+    HostURL returns aiplatform host url for a given region Example:
+    "us-central1-aiplatform.googleapis.com"
+

@@ -1,0 +1,3 @@
+package server // import "google.golang.org/adk/v2/server"
+
+Package server hosts protocol implementations to expose and serve ADK agents.

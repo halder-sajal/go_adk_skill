@@ -1,0 +1,15 @@
+package agentengine // import "google.golang.org/adk/v2/server/agentengine"
+
+Package agentengine brings functionality of serving commands for
+AgentEngine-deployed code.
+
+FUNCTIONS
+
+func ListClassMethods() ([]*structpb.Struct, error)
+    ListClassMethods returns a list of structs, each describing a supported
+    method. It is used to provide this information during the deployment
+
+func NewHandler(config *launcher.Config, sseWriteTimeout time.Duration, maxPayloadSize int64, agentEngineID string) (http.Handler, error)
+    NewHandler creates and returns an http.Handler for the AgentEngine API.
+    Handles both streaming and non-streaming versions
+

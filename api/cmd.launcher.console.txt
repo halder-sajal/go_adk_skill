@@ -1,0 +1,10 @@
+package console // import "google.golang.org/adk/v2/cmd/launcher/console"
+
+Package console provides a simple way to interact with an agent from console
+application.
+
+FUNCTIONS
+
+func NewLauncher() launcher.SubLauncher
+    NewLauncher creates new console launcher
+

@@ -1,0 +1,27 @@
+package vertexai // import "google.golang.org/adk/v2/session/vertexai"
+
+Package vertexai provides a session.Service backed by the Vertex AI Agent Engine
+runtime.
+
+FUNCTIONS
+
+func NewSessionService(ctx context.Context, cfg VertexAIServiceConfig, opts ...option.ClientOption) (session.Service, error)
+    NewSessionService returns VertextAiSessionService implementation.
+
+
+TYPES
+
+type VertexAIServiceConfig struct {
+	// ProjectID with VertexAI API enabled.
+	ProjectID string
+	// Location where the reasoningEngine is running.
+	Location string
+	// ReasoningEngine is the runtime in the agent engine which will store the
+	// sessions.
+	// Optimal way is to create reasoningEngine per app.
+	// For example, a reasoningEngine can be created via the Vertex AI REST
+	// API's 'projects.locations.reasoningEngines.create' method.
+	ReasoningEngine string
+}
+    VertexAIServiceConfig configures a Vertex AI-backed session service.
+

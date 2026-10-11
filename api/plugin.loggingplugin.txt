@@ -1,0 +1,24 @@
+package loggingplugin // import "google.golang.org/adk/v2/plugin/loggingplugin"
+
+Package loggingplugin provides a plugin that logs key invocation events (user
+messages, agent and model activity, tool calls, and errors) to the console for
+terminal-based debugging.
+
+FUNCTIONS
+
+func MustNew(name string) *plugin.Plugin
+    MustNew is like New but panics if there is an error.
+
+func New(name string) (*plugin.Plugin, error)
+    New creates an instance of the logging plugin.
+
+    This plugin helps print all critical events in the console. It is not a
+    replacement of existing logging in ADK. It rather helps terminal based
+    debugging by showing all logs in the console, and serves as a simple demo
+    for everyone to leverage when developing new plugins.
+
+    This plugin helps users track the invocation status by logging: - User
+    messages and invocation context - Agent execution flow - LLM requests
+    and responses - Tool calls with arguments and results - Events and final
+    responses - Errors during model and tool execution
+

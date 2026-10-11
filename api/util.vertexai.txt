@@ -1,0 +1,26 @@
+package vertexai // import "google.golang.org/adk/v2/util/vertexai"
+
+Package vertexai provides utilities for Agent Engine deployments
+
+FUNCTIONS
+
+func AgentEngineResource(data *AgentEngineData) string
+    AgentEngineResource returns a formatted string indicating agent engine
+    instance (template `projects/%s/locations/%s/reasoningEngines/%s`)
+
+func SessionResource(data *AgentEngineData, sessionID string) string
+    SessionResource returns a formatted string indicating
+    specific session for an agent engine instance (template
+    `projects/%s/locations/%s/reasoningEngines/%s/sessions/%s`)
+
+
+TYPES
+
+type AgentEngineData struct {
+	Location        string
+	ProjectID       string
+	ReasoningEngine string
+}
+    AgentEngineData identifies a Vertex AI Agent Engine (reasoning engine)
+    instance.
+

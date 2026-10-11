@@ -1,0 +1,40 @@
+package web // import "google.golang.org/adk/v2/cmd/launcher/web"
+
+Package web provides a way to run ADK using a web server.
+
+FUNCTIONS
+
+func BuildBaseRouter() *mux.Router
+    BuildBaseRouter returns the main router, which can be extended by
+    sub-routers.
+
+    It deliberately registers no routes of its own. mux serves the first route
+    that matches, so anything registered here would silently shadow the same
+    path registered by a caller afterwards.
+
+func NewLauncher(sublaunchers ...Sublauncher) launcher.SubLauncher
+    NewLauncher creates a new WebLauncher. It should be extended by providing
+    one or more Sublaunchers that add the actual content and functionality.
+
+
+TYPES
+
+type Sublauncher interface {
+	// Keyword is used to request usage of the Sublauncher from command-line
+	Keyword() string
+	// Parse after parsing command line args returns the remaining un-parsed arguments or error
+	Parse(args []string) ([]string, error)
+	// CommandLineSyntax returns a formatted string explaining command line syntax to end user
+	CommandLineSyntax() string
+	// SimpleDescription returns a short explanatory text displayed to end user
+	SimpleDescription() string
+
+	// SetupSubrouters adds sublauncher-specific routes to the router.
+	SetupSubrouters(router *mux.Router, config *launcher.Config) error
+	// UserMessage is a hook for sublaunchers to print a message to the user when the web server starts.
+	UserMessage(webURL string, printer func(v ...any))
+}
+    Sublauncher defines an interface for extending the WebLauncher. Each
+    sublauncher can add its own routes, wrap existing handlers, and parse its
+    own command-line flags.
+

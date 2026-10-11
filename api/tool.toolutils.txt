@@ -1,0 +1,26 @@
+package toolutils // import "google.golang.org/adk/v2/tool/toolutils"
+
+Package toolutils provides public helpers for packing tool declarations into
+a model.LLMRequest. It allows external code to consolidate tool function
+declarations the same way the built-in ADK tools do, without re-implementing the
+logic.
+
+FUNCTIONS
+
+func PackTool(req *model.LLMRequest, t Tool) error
+    PackTool ensures that in case there is a usage of multiple function tools,
+    all of them are consolidated into one genai tool that has all the function
+    declarations provided by the tools. So, if there is already a tool with a
+    function declaration, it appends another to it; otherwise, it creates a new
+    genai tool.
+
+
+TYPES
+
+type Tool interface {
+	Name() string
+	Declaration() *genai.FunctionDeclaration
+}
+    Tool is implemented by any tool that can be packed into a model.LLMRequest
+    via PackTool.
+

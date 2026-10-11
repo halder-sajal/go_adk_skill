@@ -1,0 +1,338 @@
+package llmagent // import "google.golang.org/adk/v2/agent/llmagent"
+
+Package llmagent provides an LLM-based agent. LLM agents use large language
+models to perform tasks based on instructions, user input, deciding on actions
+to take, and executing actions using available tools or delegating to sub
+agents.
+
+CONSTANTS
+
+const (
+	// ModeUnset means the mode has not been set explicitly.
+	ModeUnset = llminternal.ModeUnset
+	// ModeChat is the standard chat agent reachable via transfer_to_agent.
+	ModeChat = llminternal.ModeChat
+	// ModeTask is a task agent that chats with the user to accomplish a task.
+	ModeTask = llminternal.ModeTask
+	// ModeSingleTurn is an agent that completes a task without chatting with
+	// the user.
+	ModeSingleTurn = llminternal.ModeSingleTurn
+)
+
+FUNCTIONS
+
+func New(cfg Config) (agent.Agent, error)
+    New is a constructor for LLMAgent.
+
+func PrepareLLMAgentInput(a agent.Agent, ctx agent.InvocationContext, nodeInput any) *session.Event
+    PrepareLLMAgentInput returns the seeded user-role event for the single_turn
+    agent's first turn, and nil for any other agent.
+
+    Which agents count as single_turn is decided per invocation: the mode ctx
+    bound for a, else a's own declaration. Binding is internal — the runner,
+    the workflow engine, and RunLLMAgentAsNode once it has resolved — so
+    an out-of-module caller gets a seed whenever a declares single_turn,
+    and whenever it is called with a ctx from inside a placement that bound it,
+    which a callback or tool running under a graph node holds.
+
+func ProcessLLMAgentOutput(a agent.Agent, ev *session.Event) error
+    ProcessLLMAgentOutput post-processes a model-authored event from the
+    LlmAgent.
+
+    On the agent's final text turn (no function calls, not partial, role=model)
+    we:
+      - parse the text against the agent's OutputSchema if set, else keep the
+        raw text;
+      - record an OutputKey state-delta on the event so the runner
+        persists it (Go writes to ev.Actions.StateDelta; Python writes to
+        ctx.actions.state_delta — the runner reconciles the per-event delta into
+        session state on AppendEvent, so the two paths converge);
+      - stash the parsed value on event.Output for the node's terminal output.
+
+    Returns an error iff OutputSchema validation fails on a non-empty model
+    reply; the caller (runSingleTurn) propagates it.
+
+func RunLLMAgentAsNode(a agent.Agent, ctx agent.Context, nodeInput any) iter.Seq2[*session.Event, error]
+    RunLLMAgentAsNode runs an LlmAgent as a workflow node.
+
+    The mode is the one this invocation bound for the agent, else the agent's
+    own declaration, else chat. An out-of-module caller cannot bind — only the
+    runner, the workflow engine, and this function once it has resolved — so an
+    agent that declares nothing runs chat here, where it ran single_turn before
+    the placement was made per-invocation.
+
+    Per-mode behaviour:
+
+      - single_turn: the wrapper binds the mode to the agent for this
+        invocation, so the contents processor scopes history to the
+        current turn — unless the agent explicitly set IncludeContents to
+        IncludeContentsDefault, which keeps the history. It seeds the agent
+        with a single user-content event derived from nodeInput, drives one
+        Agent.Run, post-processes the model reply into the terminal Output,
+        then returns.
+      - task: the wrapper drives Agent.Run and watches for the finish_task
+        FunctionCall; once the matching FinishTaskTool FunctionResponse signals
+        success, the wrapper promotes the FC args (or the wrapped value) as
+        the terminal Output and returns. Non-success FRs let the LLM see the
+        validation error and retry.
+      - chat: nodeInput is ignored — runChat is driven from the session,
+        so a caller whose nodeInput is not also in the session sees it dropped.
+        The wrapper runs an outer dispatch loop. Before re-entering
+        Agent.Run on each iteration it scans the session for unresolved task
+        delegations (task FCs from this coordinator without a matching FR),
+        dispatches each via workflow.RunNode under a stable WithRunID(fc.ID),
+        and synthesises a user-role FR event so the LLM sees the task result on
+        the next round. The loop ends when the LLM finishes without delegating.
+        transfer_to_agent is handled in-process by llmagent.Run (forwarded
+        through the same iterator via base_flow.go:639-651) so a single
+        runner.Run call returns both the coordinator's transfer event AND
+        the transferred-to sub-agent's first response. See the package
+        comment block in runChat below for why this differs from adk-python's
+        "exit-and-re-pick-next-turn" model.
+
+
+TYPES
+
+type AfterModelCallback func(ctx agent.Context, llmResponse *model.LLMResponse, llmResponseError error) (*model.LLMResponse, error)
+    AfterModelCallback that is called after receiving a response from the model.
+
+    If it returns non-nil LLMResponse or error, the actual model response/error
+    is replaced with the returned response/error.
+
+type AfterToolCallback func(ctx agent.Context, tool tool.Tool, args, result map[string]any, err error) (map[string]any, error)
+    AfterToolCallback is a function type executed after a tool's Run method has
+    completed, regardless of whether the tool returned a result or an error.
+
+    Callbacks are executed in the order they are provided. If a callback returns
+    a non-nil result or an error:
+      - execution of remaining callbacks stops
+      - the returned result and/or error is used as the final tool output
+
+type BeforeModelCallback func(ctx agent.Context, llmRequest *model.LLMRequest) (*model.LLMResponse, error)
+    BeforeModelCallback that is called before sending a request to the model.
+
+    If it returns non-nil LLMResponse or error, the actual model call is skipped
+    and the returned response/error is used.
+
+type BeforeToolCallback func(ctx agent.Context, tool tool.Tool, args map[string]any) (map[string]any, error)
+    BeforeToolCallback is executed before a tool's Run method.
+
+    Callbacks are executed in the order they are provided. If a callback returns
+    a non-nil result or an error: - execution of remaining callbacks stops - the
+    actual tool call is skipped - the returned result is used as the tool result
+
+    To modify tool arguments and still run the tool, update args in place and
+    return (nil, nil).
+
+type Config struct {
+	// Name must be a non-empty string, unique within the agent tree.
+	// Agent name cannot be "user", since it's reserved for end-user's input.
+	Name string
+	// Description of the agent's capability.
+	//
+	// LLM uses this to determine whether to delegate control to the agent.
+	// One-line description is enough and preferred.
+	Description string
+	// SubAgents are the child agents that this agent can delegate tasks to.
+	// ADK will automatically set a parent of each sub-agent to this agent to
+	// allow agent transferring across the tree.
+	SubAgents []agent.Agent
+
+	// BeforeAgentCallbacks is a list of callbacks that are called sequentially
+	// before the agent starts its run.
+	//
+	// If any callback returns non-nil content or error, then the agent run and
+	// the remaining callbacks will be skipped, and a new event will be created
+	// from the content or error of that callback.
+	BeforeAgentCallbacks []agent.BeforeAgentCallback
+	// AfterAgentCallbacks is a list of callbacks that are called sequentially
+	// after the agent has completed its run.
+	//
+	// If any callback returns non-nil content or error, then a new event will be
+	// created from the content or error of that callback and the remaining
+	// callbacks will be skipped.
+	AfterAgentCallbacks []agent.AfterAgentCallback
+
+	// GenerateContentConfig is for the additional content generation
+	// configuration.
+	//
+	// NOTE: not all fields are usable, e.g. tools must be configured via
+	// `tools`.
+	//
+	// For example: use this config to adjust model temperature, configure
+	// safety settings, etc.
+	GenerateContentConfig *genai.GenerateContentConfig
+
+	// BeforeModelCallbacks will be called in the order they are provided until
+	// there's a callback that returns a non-nil LLMResponse or error. Then
+	// actual LLM call is skipped, and the returned response/error is used.
+	//
+	// This provides an opportunity to inspect, log, or modify the `LLMRequest`
+	// object. It can also be used to implement caching by returning a cached
+	// `LLMResponse`, which would skip the actual model call.
+	BeforeModelCallbacks []BeforeModelCallback
+	// Model that is used by the agent.
+	Model model.LLM
+	// AfterModelCallbacks will be called in the order they are provided until
+	// there's a callback that returns a non-nil LLMResponse or error. Then
+	// actual LLM response is replaced with the returned response/error.
+	//
+	// This is the ideal place to log model responses, collect metrics on token
+	// usage, or perform post-processing on the raw `LLMResponse`.
+	AfterModelCallbacks []AfterModelCallback
+
+	OnModelErrorCallbacks []OnModelErrorCallback
+
+	// Instruction is set for the LLM model guiding the agent's behavior.
+	//
+	// The string is treated as a template:
+	//  - There can be placeholders like {key_name} that will be resolved by ADK
+	//    at runtime using session state and context.
+	//  - key_name must match "^[a-zA-Z_][a-zA-Z0-9_]*$", otherwise it will be
+	//    treated as a literal.
+	//  - {artifact.key_name} can be used to insert the text content of the
+	//    artifact named key_name.
+	//
+	// If the state variable or artifact does not exist, the agent will raise an
+	// error. If you want to ignore the error, you can append a ? to the
+	// variable name as in {var?} to make it optional.
+	//
+	// If templating logic for {} chars is not desired, then InstructionProvider
+	// should be used.
+	Instruction string
+	// InstructionProvider allows to create instructions dynamically based on
+	// the agent context.
+	//
+	// It takes over the Instruction field if both are set.
+	//
+	// InstructionProvider does not automatically substitute values to {} and
+	// treats them as just a raw char.
+	// If you need to inject session state variables, use
+	// util/instructionutil.InjectSessionState helper.
+	InstructionProvider InstructionProvider
+
+	// GlobalInstruction is the instruction for all agents in the entire
+	// agent tree.
+	//
+	// The string is treated as a template:
+	//  - There can be placeholders like {key_name} that will be resolved by ADK
+	//    at runtime using session state and context.
+	//  - key_name must match "^[a-zA-Z_][a-zA-Z0-9_]*$", otherwise it will be
+	//    treated as a literal.
+	//  - {artifact.key_name} can be used to insert the text content of the
+	//    artifact named key_name.
+	//
+	// If the state variable or artifact does not exist, the agent will raise an
+	// error. If you want to ignore the error, you can append a ? to the
+	// variable name as in {var?} to make it optional.
+	//
+	// ONLY the GlobalInstruction in the root agent will take effect.
+	//
+	// For example: GlobalInstruction can make all agents have a stable identity
+	// or personality.
+	GlobalInstruction string
+	// GlobalInstructionProvider allows to create global instructions
+	// dynamically based on the agent context.
+	//
+	// It takes over the GlobalInstruction field if both are set.
+	GlobalInstructionProvider InstructionProvider
+
+	// DisallowTransferToParent prevents transferring to parent agent if LLM
+	// decides to.
+	DisallowTransferToParent bool
+	// DisallowTransferToPeers prevents transferring to peer agents.
+	DisallowTransferToPeers bool
+
+	// Whether to include contents (conversation history) in the model request.
+	//
+	// Left unset, an agent placed as a single_turn workflow node sees only the
+	// current turn. Setting IncludeContentsDefault explicitly keeps the history
+	// even there.
+	IncludeContents IncludeContents
+
+	// TODO(ngeorgy): consider to switch to jsonschema for input and output schema.
+	// The input schema when agent is used as a tool.
+	InputSchema *genai.Schema
+	// The output schema when agent replies.
+	//
+	// When OutputSchema is set, the framework transparently injects a
+	// set_model_response tool so the model can still invoke other tools
+	// (function tools, RAG, agent transfer, etc.) while producing structured
+	// output. See internal/llminternal/outputschema_processor.go for details.
+	OutputSchema *genai.Schema
+
+	// Callbacks are executed in the order they are provided.
+	// If a callback returns result/error, then the execution of the callback
+	// list stops AND the actual tool call is skipped.
+	BeforeToolCallbacks []BeforeToolCallback
+	// Tools available to the agent.
+	Tools []tool.Tool
+	// Callbacks are executed in the order they are provided.
+	// If a callback returns result/error, then the execution of the callback
+	// list stops and this result/error is returned instead.
+	AfterToolCallbacks []AfterToolCallback
+	// Toolsets will be used by llmagent to extract tools and pass to the
+	// underlying LLM.
+	Toolsets []tool.Toolset
+
+	OnToolErrorCallbacks []OnToolErrorCallback
+
+	// OutputKey is an optional parameter to specify the key in session state for the agent output.
+	//
+	// Typical uses cases are:
+	// - Extracts agent reply for later use, such as in tools, callbacks, etc.
+	// - Connects agents to coordinate with each other.
+	OutputKey string
+
+	// Mode is the delegation mode for this agent.
+	//
+	// Options:
+	//   ModeChat: Standard chat agent reachable via transfer_to_agent.
+	//   ModeTask: Task agent that chats with the user to accomplish a task.
+	//   ModeSingleTurn: Agents that complete a task without chatting with the user.
+	//
+	// Default value is ModeChat as a sub-agent, ModeSingleTurn as a node in a workflow.
+	Mode Mode
+}
+    Config of the LLMAgent.
+
+type IncludeContents string
+    IncludeContents controls what parts of prior conversation history is
+    received by llmagent.
+
+const (
+	// IncludeContentsNone makes the llmagent operate solely on its current turn (latest user input + any following agent events).
+	IncludeContentsNone IncludeContents = "none"
+	// IncludeContentsDefault is what an unset IncludeContents behaves as for a
+	// plain conversational agent: the llmagent receives the relevant
+	// conversation history. Setting it explicitly is not the same as leaving
+	// the field unset — it also keeps the history for an agent placed as a
+	// single_turn workflow node, which otherwise sees only the current turn.
+	IncludeContentsDefault IncludeContents = "default"
+)
+type InstructionProvider func(ctx agent.ReadonlyContext) (string, error)
+    InstructionProvider allows to create instructions dynamically. It is called
+    on each agent invocation.
+
+    NOTE: when InstructionProvider is used, ADK will NOT inject
+    session state placeholders into the instruction. You can use
+    util/instructionutil.InjectSessionState() helper if this functionality is
+    needed.
+
+type Mode = llminternal.Mode
+    Mode is the delegation mode of an LLMAgent. See Config.Mode for details.
+
+type OnModelErrorCallback func(ctx agent.Context, llmRequest *model.LLMRequest, llmResponseError error) (*model.LLMResponse, error)
+    OnModelErrorCallback that is called when receiving an error response from
+    the llm model.
+
+    If it returns non-nil LLMResponse or error, the actual model response/error
+    is replaced with the returned response/error.
+
+type OnToolErrorCallback func(ctx agent.Context, tool tool.Tool, args map[string]any, err error) (map[string]any, error)
+    OnToolErrorCallback that is called when receiving an error response from
+    tool execution.
+
+    If it returns non-nil LLMResponse or error, the actual model response/error
+    is replaced with the returned response/error.
+

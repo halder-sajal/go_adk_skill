@@ -1,0 +1,19 @@
+package controllers // import "google.golang.org/adk/v2/server/agentengine/controllers"
+
+Package controllers implements the HTTP controllers for the Agent Engine API,
+dispatching query requests to registered method handlers.
+
+TYPES
+
+type AgentEngineAPIController struct {
+	// Has unexported fields.
+}
+    AgentEngineAPIController holds information about the supported methods
+
+func NewAgentEngineAPIController(service session.Service, sseTimeout time.Duration, maxPayloadSize int64, handlers []method.MethodHandler) (*AgentEngineAPIController, error)
+    NewAgentEngineAPIController creates a new AgentEngineAPIController. Verifies
+    if registered methods are unique by name
+
+func (c *AgentEngineAPIController) Query(rw http.ResponseWriter, req *http.Request)
+    Query provides a way to invoke all the methods
+

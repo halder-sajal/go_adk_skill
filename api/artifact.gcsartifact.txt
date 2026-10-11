@@ -1,0 +1,22 @@
+package gcsartifact // import "google.golang.org/adk/v2/artifact/gcsartifact"
+
+Package gcsartifact provides a Google Cloud Storage (GCS) artifact.Service.
+
+This package allows storing and retrieving artifacts in a GCS bucket.
+Artifacts are organized by application name, user ID, session ID, and filename,
+with support for versioning.
+
+VARIABLES
+
+var ErrVersionConflict = errors.New("artifact version conflict")
+    ErrVersionConflict is returned by Save when it cannot claim a new version
+    within its retry budget because concurrent writers keep taking the version
+    it picks. It is always wrapped, so test for it with errors.Is; a caller
+    seeing it can safely retry the save.
+
+
+FUNCTIONS
+
+func NewService(ctx context.Context, bucketName string, opts ...option.ClientOption) (artifact.Service, error)
+    NewService creates a Google Cloud Storage service for the specified bucket.
+

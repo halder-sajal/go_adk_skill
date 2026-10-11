@@ -1,0 +1,36 @@
+package skilltoolset // import "google.golang.org/adk/v2/tool/skilltoolset"
+
+Package skilltoolset provides a toolset that lets an agent discover and use
+skills: folders of instructions and resources that extend its capabilities.
+
+TYPES
+
+type Config struct {
+	Source skill.Source
+	// Optional name of the toolset. If empty, default name will be used.
+	Name string
+	// Optional system instruction. If empty, default instruction will be used.
+	SystemInstruction string
+}
+    Config holds the configuration for creating a Skill Toolset.
+
+type SkillToolset struct {
+	// Has unexported fields.
+}
+    SkillToolset provides a toolset for skills.
+
+func New(ctx context.Context, cfg Config) (*SkillToolset, error)
+    New creates a new Skill Toolset based on the provided configuration.
+
+func (ts *SkillToolset) Name() string
+    Name implements tool.Toolset. Returns the name of the toolset.
+
+func (ts *SkillToolset) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error
+    ProcessRequest implements toolinternal.RequestProcessor. It attaches the
+    list of available skills and the system instruction explaining to the agent
+    what it can do with these skills.
+
+func (ts *SkillToolset) Tools(ctx agent.ReadonlyContext) ([]tool.Tool, error)
+    Tools implements tool.Toolset. It returns a list of tools agent can use to
+    interact with skills.
+

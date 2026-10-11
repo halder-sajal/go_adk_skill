@@ -1,0 +1,28 @@
+package workflowagent // import "google.golang.org/adk/v2/agent/workflowagent"
+
+Package workflowagent adapts a workflow.Workflow (a node/graph workflow) to the
+agent.Agent interface, so a graph can be run by a runner.Runner like any other
+agent.
+
+FUNCTIONS
+
+func New(cfg Config) (agent.Agent, error)
+    New creates a new Workflow agent. A single returned agent instance can
+    serve many concurrent sessions: the per-invocation run state lives in
+    session.State, not on the agent. A paused workflow resumes on a follow-up
+    turn when the user submits a FunctionResponse targeting the InterruptID
+    emitted by the paused node.
+
+
+TYPES
+
+type Config struct {
+	Name                 string
+	Description          string
+	SubAgents            []agent.Agent
+	BeforeAgentCallbacks []agent.BeforeAgentCallback
+	AfterAgentCallbacks  []agent.AfterAgentCallback
+	Edges                []workflow.Edge
+}
+    Config is the configuration for creating a new Workflow agent.
+

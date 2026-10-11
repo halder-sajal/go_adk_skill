@@ -1,0 +1,34 @@
+package apigee // import "google.golang.org/adk/v2/model/apigee"
+
+Package apigee provides an LLM implementation for calling Apigee proxy.
+
+FUNCTIONS
+
+func NewModel(ctx context.Context, modelName string, opts ...Option) (*apigeeModel, error)
+    NewModel creates and initializes a new model instance that satisfies the
+    model.LLM interface, backed by the Apigee proxy.
+
+
+TYPES
+
+type Config struct {
+	ModelName     string
+	ProxyURL      string
+	CustomHeaders http.Header
+	HTTPClient    *http.Client // For testing only.
+}
+    Config contains the configuration for the Apigee LLM.
+
+type Option func(*Config)
+    Option is a function that configures the Apigee LLM.
+
+func WithCustomHeaders(headers http.Header) Option
+    WithCustomHeaders sets the custom headers for the Apigee LLM.
+
+func WithHTTPClient(client *http.Client) Option
+    WithHTTPClient sets the HTTP client for the Apigee LLM. This is for testing
+    only.
+
+func WithProxyURL(proxyURL string) Option
+    WithProxyURL sets the proxy URL for the Apigee LLM.
+

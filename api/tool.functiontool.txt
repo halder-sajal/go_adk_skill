@@ -1,0 +1,64 @@
+package functiontool // import "google.golang.org/adk/v2/tool/functiontool"
+
+Package functiontool provides a tool that wraps a Go function.
+
+VARIABLES
+
+var ErrInvalidArgument = errors.New("invalid argument")
+    ErrInvalidArgument indicates the input parameter type is invalid.
+
+
+FUNCTIONS
+
+func New[TArgs, TResults any](cfg Config, handler Func[TArgs, TResults]) (tool.Tool, error)
+    New creates a new tool with a name, description, and the provided handler.
+    Input schema is automatically inferred from the input and output types.
+
+func NewStreaming[TArgs any](cfg Config, handler StreamingFunc[TArgs]) (tool.Tool, error)
+    NewStreaming creates a new streaming tool.
+
+
+TYPES
+
+type Config struct {
+	// The name of this tool.
+	Name string
+	// A human-readable description of the tool.
+	Description string
+	// An optional JSON schema object defining the expected parameters for the tool.
+	// If it is nil, FunctionTool tries to infer the schema based on the handler type.
+	InputSchema *jsonschema.Schema
+	// An optional JSON schema object defining the structure of the tool's output.
+	// If it is nil, FunctionTool tries to infer the schema based on the handler type.
+	OutputSchema *jsonschema.Schema
+	// IsLongRunning makes a FunctionTool a long-running operation.
+	IsLongRunning bool
+
+	// RequireConfirmation flags whether this tool must always ask for user confirmation
+	// before execution. If set to true, the ADK framework will automatically initiate
+	// a Human-in-the-Loop (HITL) confirmation request when this tool is invoked.
+	RequireConfirmation bool
+
+	// RequireConfirmationProvider allows for dynamic determination of whether
+	// user confirmation is needed. This field is a function called at runtime to decide if
+	// a confirmation request should be sent. The function takes the tool's input parameters as arguments.
+	// This provider offers more flexibility than the static RequireConfirmation flag,
+	// enabling conditional confirmation based on the invocation details.
+	// If set, this often takes precedence over the RequireConfirmation flag.
+	//
+	// Required signature for a provider function:
+	// func(toolInput ToolArgs) (bool)
+	// where ToolArgs is the input type of your go function
+	// Returning true means confirmation is required.
+	RequireConfirmationProvider any
+}
+    Config is the input to the NewFunctionTool function.
+
+type Func[TArgs, TResults any] func(agent.Context, TArgs) (TResults, error)
+    Func represents a Go function that can be wrapped in a tool. It takes a
+    agent.Context and a generic argument type, and returns a generic result
+    type.
+
+type StreamingFunc[TArgs any] func(agent.Context, TArgs) iter.Seq2[string, error]
+    StreamingFunc represents a Go function that streams results.
+

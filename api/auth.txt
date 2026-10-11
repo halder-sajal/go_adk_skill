@@ -1,0 +1,172 @@
+package auth // import "google.golang.org/adk/v2/auth"
+
+Package auth provides a small, idiomatic authentication layer for ADK Go.
+
+It models the two things a consumer actually needs: a resolved Credential
+that knows how to write itself onto an outbound HTTP request, and a
+CredentialProvider seam that resolves a credential for the current invocation.
+Built-in providers cover the common cases — a static bearer token
+(StaticToken), a header API key (APIKey), any golang.org/x/oauth2.TokenSource
+(TokenSourceProvider), Application Default Credentials (ADC), and service
+accounts (ServiceAccount) — and a context-aware Transport applies a provider per
+outgoing request.
+
+Token exchange and refresh are delegated to golang.org/x/oauth2 rather than
+reimplemented here. Heavier, provider-specific integrations (for example GCP
+agent identity) live in subpackages so this package stays dependency-light.
+
+TYPES
+
+type APIKeyCredential struct {
+	Name  string
+	Value string
+}
+    APIKeyCredential is a header-based API key, e.g. {Name: "X-Api-Key"}.
+
+func (c APIKeyCredential) Apply(h http.Header) error
+    Apply implements Credential.
+
+type BasicCredential struct {
+	Username string
+	Password string
+}
+    BasicCredential is an HTTP basic username/password credential.
+
+func (c BasicCredential) Apply(h http.Header) error
+    Apply implements Credential.
+
+type BearerCredential struct {
+	Token string
+}
+    BearerCredential is an HTTP bearer token.
+
+func (c BearerCredential) Apply(h http.Header) error
+    Apply implements Credential.
+
+type ConsentRequiredError struct {
+	// AuthURI is the URL the end user must visit to grant consent.
+	//
+	// Hand it to that user and to nobody else. It is built by the credentials
+	// service, and a 3-legged authorization URI normally carries the acting user
+	// in a login_hint parameter, so it is not redacted the way service text in
+	// other errors is — the identifier in it is what makes the URL work. Do not
+	// log it, do not put it in a span, and do not serialize this error: every
+	// field is exported, so a json.Marshal of it publishes the URI whatever
+	// Error() says.
+	AuthURI string
+	// Nonce is an opaque value echoed back to correlate the consent response.
+	// Sensitive on the same terms as AuthURI, which embeds it.
+	Nonce string
+	// Key is the credential-store key to resume the flow under.
+	Key string
+}
+    ConsentRequiredError signals that interactive, 3-legged OAuth consent
+    is needed before a credential can be issued. Consumers detect it with
+    errors.As.
+
+func (e *ConsentRequiredError) Error() string
+    Error implements error. It deliberately omits AuthURI: this error becomes
+    a tool's error, which is fed to the model and persisted in the session,
+    and the consent URI carries the state and nonce that bind the credential.
+    Consumers read it off the field.
+
+type Credential interface {
+	// Apply writes the credential's auth headers onto h.
+	Apply(h http.Header) error
+}
+    Credential is a resolved credential that writes itself onto an outbound HTTP
+    request.
+
+func WithHeaders(inner Credential, headers map[string]string) Credential
+    WithHeaders wraps inner to also set headers verbatim (overriding inner on
+    conflict) — e.g. x-goog-user-project alongside an OAuth2 token.
+
+type CredentialProvider interface {
+	// Credential resolves a ready-to-use credential. ctx carries cancellation
+	// and deadlines.
+	//
+	// A provider that needs the acting user's identity (for example the GCP
+	// provider, which keys on the user) recovers the ADK context from ctx via a
+	// shared helper introduced together with the first provider that needs it —
+	// so identity rides on the one ADK context rather than an auth-specific key.
+	//
+	// When interactive (3-legged) consent is required and cannot be completed
+	// non-interactively, Credential returns a *ConsentRequiredError carrying the
+	// authorization URI; the tool layer turns that into a human-in-the-loop
+	// consent round-trip. Non-interactive providers never return it.
+	Credential(ctx context.Context) (Credential, error)
+}
+    CredentialProvider resolves a Credential for the current invocation.
+    It is the Go analog of adk-python's BaseAuthProvider.get_auth_credential.
+
+func ADC(scopes ...string) CredentialProvider
+    ADC returns a provider backed by Google Application Default Credentials.
+    Credentials are discovered lazily on first use and reused thereafter;
+    with no scopes the cloud-platform scope is used.
+
+func APIKey(name, value string) CredentialProvider
+    APIKey returns a provider that yields a header-based API key credential,
+    where name is the header (for example "X-Api-Key").
+
+func ServiceAccount(cfg ServiceAccountConfig) CredentialProvider
+    ServiceAccount returns a provider that mints tokens for a service account,
+    from an explicit key or from ADC. The token source is built lazily on first
+    use and reused thereafter.
+
+func StaticToken(token string) CredentialProvider
+    StaticToken returns a provider that always yields the given bearer token.
+
+func TokenSourceProvider(ts oauth2.TokenSource) CredentialProvider
+    TokenSourceProvider wraps any oauth2.TokenSource. The resolved credential
+    carries the source, so a fresh (auto-refreshed) token is minted at apply
+    time. This covers client-credentials / 2-legged OAuth.
+
+type OAuth2Credential struct {
+	TokenSource oauth2.TokenSource
+}
+    OAuth2Credential mints a fresh access token from TokenSource on each Apply.
+    For a static token, wrap it in oauth2.StaticTokenSource.
+
+func (c OAuth2Credential) Apply(h http.Header) error
+    Apply implements Credential.
+
+type ProviderFunc func(ctx context.Context) (Credential, error)
+    ProviderFunc adapts an ordinary function to a CredentialProvider.
+
+func (f ProviderFunc) Credential(ctx context.Context) (Credential, error)
+    Credential implements CredentialProvider.
+
+type ServiceAccountConfig struct {
+	// JSONKey is a service-account key in JSON form. When empty, Application
+	// Default Credentials are used instead.
+	JSONKey []byte
+	// Scopes requested for an OAuth2 access token. Ignored when Audience is set.
+	// Required with an explicit JSONKey; when falling back to ADC (JSONKey
+	// empty), empty Scopes default to the cloud-platform scope.
+	Scopes []string
+	// Audience, when non-empty, requests a Google-signed ID token for that
+	// audience (for example a Cloud Run or IAP URL) instead of an access token.
+	Audience string
+}
+    ServiceAccountConfig configures a service-account credential provider.
+
+    Spec: https://cloud.google.com/iam/docs/service-account-creds
+
+type Transport struct {
+	// Provider resolves the credential to apply. Required.
+	Provider CredentialProvider
+	// Base is the underlying RoundTripper. When nil, [http.DefaultTransport].
+	Base http.RoundTripper
+}
+    Transport is an http.RoundTripper that resolves a credential per request via
+    a CredentialProvider and applies it to the outgoing request headers.
+
+    The provider receives the request context (req.Context()), which — for
+    a request made during a tool call — descends from the ADK context that
+    flowed into the call. The resolver runs on every request so that per-user
+    credentials are never shared across users; refresh and caching are handled
+    by the provider's underlying token source.
+
+func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error)
+    RoundTrip implements http.RoundTripper.
+

@@ -1,0 +1,10 @@
+package pubsub // import "google.golang.org/adk/v2/cmd/launcher/web/triggers/pubsub"
+
+Package pubsub provides a sublauncher that adds PubSub trigger capabilities to
+ADK web server.
+
+FUNCTIONS
+
+func NewLauncher() web.Sublauncher
+    NewLauncher creates a new pubsub launcher. It extends Web launcher.
+

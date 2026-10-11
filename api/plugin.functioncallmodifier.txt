@@ -1,0 +1,22 @@
+package functioncallmodifier // import "google.golang.org/adk/v2/plugin/functioncallmodifier"
+
+Package functioncallmodifier provides a plugin to modify function calls.
+
+FUNCTIONS
+
+func MustNewPlugin(cfg FunctionCallModifierConfig) *plugin.Plugin
+    MustNewPlugin is like NewPlugin but panics if there is an error.
+
+func NewPlugin(cfg FunctionCallModifierConfig) (*plugin.Plugin, error)
+    NewPlugin creates a FunctionCallModifierPlugin.
+
+
+TYPES
+
+type FunctionCallModifierConfig struct {
+	Predicate           func(toolName string) bool
+	Args                map[string]*genai.Schema
+	OverrideDescription func(originalDescription string) string
+}
+    FunctionCallModifierConfig configures a FunctionCallModifierPlugin.
+
